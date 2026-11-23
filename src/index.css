@@ -4,15 +4,19 @@
 
 @layer base {
   body {
-    @apply bg-gradient-to-br from-slate-950 via-slate-900 to-zinc-950 text-slate-100 antialiased min-h-screen;
+    background: linear-gradient(135deg, #FBF8EE 0%, #F7F2E2 52%, #F1E9D2 100%);
+    @apply text-slate-800 antialiased min-h-screen;
   }
 }
 
 .liquid-glass {
-  @apply bg-slate-900/75 backdrop-blur-xl border border-white/10 shadow-[0_10px_36px_rgba(0,0,0,0.45)];
+  background: rgba(255, 253, 247, 0.78);
+  backdrop-filter: blur(18px);
+  border: 1px solid rgba(226, 216, 187, 0.85);
+  box-shadow: 0 8px 28px rgba(120, 102, 58, 0.08);
 }
 
 .gold-badge {
   background: linear-gradient(135deg, #F3D06B 0%, #D4AF37 55%, #A67C14 100%);
-  @apply text-slate-950 font-bold shadow-sm border border-amber-300/50;
+  @apply text-slate-950 font-bold shadow-sm border border-amber-300/60;
 }

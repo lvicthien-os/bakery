@@ -1197,7 +1197,7 @@ export function App() {
             <button
               onClick={handleExportCsv}
               title="Xuất CSV"
-              className="w-9 h-9 rounded-full bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center transition shadow-sm"
+              className="w-9 h-9 rounded-full bg-slate-900 hover:bg-[#FFFDF8] text-slate-900 flex items-center justify-center transition shadow-sm"
             >
               <Download className="w-4 h-4" />
             </button>
@@ -1435,7 +1435,7 @@ export function App() {
                   type="button"
                   disabled={parsedBulkOrders.length === 0}
                   onClick={handleImportBulkOrders}
-                  className="px-4 py-2 rounded-xl bg-sky-600 disabled:bg-slate-300 text-white text-xs sm:text-sm font-semibold"
+                  className="px-4 py-2 rounded-xl bg-sky-600 disabled:bg-slate-300 text-slate-900 text-xs sm:text-sm font-semibold"
                 >
                   Thêm {parsedBulkOrders.length} đơn vào hệ thống
                 </button>
@@ -1446,7 +1446,7 @@ export function App() {
                   Xem trước đơn sẽ được tạo ({parsedBulkOrders.length})
                 </div>
                 {parsedBulkOrders.length === 0 ? (
-                  <div className="text-xs text-slate-400">
+                  <div className="text-xs text-slate-500">
                     Chưa có dòng hợp lệ nào để xem trước.
                   </div>
                 ) : (
@@ -1470,7 +1470,7 @@ export function App() {
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="relative flex-1 min-w-[220px]">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -1487,7 +1487,7 @@ export function App() {
                   }}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1 ${
                     orderSubView === 'schedule' && calendarMode === 'list'
-                      ? 'bg-slate-900 text-white'
+                      ? 'bg-slate-900 text-slate-900'
                       : 'text-slate-600'
                   }`}
                 >
@@ -1501,7 +1501,7 @@ export function App() {
                   }}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1 ${
                     orderSubView === 'schedule' && calendarMode === 'week'
-                      ? 'bg-slate-900 text-white'
+                      ? 'bg-slate-900 text-slate-900'
                       : 'text-slate-600'
                   }`}
                 >
@@ -1515,7 +1515,7 @@ export function App() {
                   }}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1 ${
                     orderSubView === 'schedule' && calendarMode === 'month'
-                      ? 'bg-slate-900 text-white'
+                      ? 'bg-slate-900 text-slate-900'
                       : 'text-slate-600'
                   }`}
                 >
@@ -1608,7 +1608,7 @@ export function App() {
                                     className={`text-[10px] truncate ${
                                       cell.isSpecialLunar
                                         ? 'text-rose-600 font-bold'
-                                        : 'text-slate-400'
+                                        : 'text-slate-500'
                                     }`}
                                   >
                                     {cell.lunarText}
@@ -1923,7 +1923,7 @@ export function App() {
                 <button
                   onClick={() => setPartnerSubView('finance')}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium ${
-                    partnerSubView === 'finance' ? 'bg-slate-900 text-white' : 'text-slate-600'
+                    partnerSubView === 'finance' ? 'bg-slate-900 text-slate-900' : 'text-slate-600'
                   }`}
                 >
                   Thu Chi
@@ -1931,7 +1931,7 @@ export function App() {
                 <button
                   onClick={() => setPartnerSubView('customers')}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium ${
-                    partnerSubView === 'customers' ? 'bg-slate-900 text-white' : 'text-slate-600'
+                    partnerSubView === 'customers' ? 'bg-slate-900 text-slate-900' : 'text-slate-600'
                   }`}
                 >
                   Khách hàng ({db.customers.length})
@@ -1939,7 +1939,7 @@ export function App() {
                 <button
                   onClick={() => setPartnerSubView('suppliers')}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium ${
-                    partnerSubView === 'suppliers' ? 'bg-slate-900 text-white' : 'text-slate-600'
+                    partnerSubView === 'suppliers' ? 'bg-slate-900 text-slate-900' : 'text-slate-600'
                   }`}
                 >
                   Nhà cung cấp
@@ -1947,7 +1947,7 @@ export function App() {
                 <button
                   onClick={() => setPartnerSubView('staff')}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium ${
-                    partnerSubView === 'staff' ? 'bg-slate-900 text-white' : 'text-slate-600'
+                    partnerSubView === 'staff' ? 'bg-slate-900 text-slate-900' : 'text-slate-600'
                   }`}
                 >
                   Nhân viên
@@ -2073,7 +2073,7 @@ export function App() {
                       <button
                         onClick={() => setTxFilter('all')}
                         className={`px-2.5 py-1 rounded-full text-xs font-medium ${
-                          txFilter === 'all' ? 'bg-slate-900 text-white' : 'bg-white/80 text-slate-600'
+                          txFilter === 'all' ? 'bg-slate-900 text-slate-900' : 'bg-white/80 text-slate-600'
                         }`}
                       >
                         Tất cả
@@ -2092,7 +2092,7 @@ export function App() {
                         onClick={() => setTxFilter('expense')}
                         className={`px-2.5 py-1 rounded-full text-xs font-medium ${
                           txFilter === 'expense'
-                            ? 'bg-rose-600 text-white'
+                            ? 'bg-rose-600 text-slate-900'
                             : 'bg-white/80 text-slate-600'
                         }`}
                       >
@@ -2168,7 +2168,7 @@ export function App() {
             {partnerSubView === 'customers' && (
               <div className="space-y-3">
                 <div className="relative">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                   <input
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
@@ -2738,4 +2738,5 @@ export function App() {
 }
 
 export default App;
+
 
