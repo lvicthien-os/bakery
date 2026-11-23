@@ -43,6 +43,8 @@ import {
   importDatabaseFromCsv,
   loadLocalDatabase,
   saveLocalDatabase,
+  pullDatabaseFromGoogleDrive,
+  signInWithGoogleGmail,
   syncToGoogleDrive,
 } from './services/storageService';
 import { formatSolarWithLunar, solarToLunar } from './utils/lunarCalendar';
@@ -214,6 +216,45 @@ export function App() {
     };
   }, [db]);
 
+  const [googleClientId, setGoogleClientId] = useState<string>(() => localStorage.getItem('UT_BAKERY_GCLIENT_ID') || '');
+  const [googleEmail, setGoogleEmail] = useState<string>(() => localStorage.getItem('UT_BAKERY_GMAIL') || '');
+  const [googleAccessToken, setGoogleAccessToken] = useState<string>('');
+
+  const handleGoogleLogin = async () => {
+    const cleanId = googleClientId.trim();
+    if (!cleanId) {
+      notify('Nhập Google OAuth Client ID trước khi đăng nhập Gmail');
+      return;
+    }
+    localStorage.setItem('UT_BAKERY_GCLIENT_ID', cleanId);
+    const res = await signInWithGoogleGmail(cleanId);
+    if (!res.ok || !res.accessToken) {
+      notify(res.message || 'Đăng nhập Gmail thất bại');
+      return;
+    }
+    setGoogleAccessToken(res.accessToken);
+    if (res.email) {
+      setGoogleEmail(res.email);
+      localStorage.setItem('UT_BAKERY_GMAIL', res.email);
+    }
+    const pulled = await pullDatabaseFromGoogleDrive(res.accessToken, db.config);
+    if (pulled.ok && pulled.db) {
+      saveLocalDatabase(pulled.db);
+      setDb(pulled.db);
+      setSyncStatus('synced');
+      notify(`Đã đăng nhập ${res.email || 'Gmail'} & tải dữ liệu đồng bộ`);
+    } else {
+      notify(`Đã kết nối ${res.email || 'Gmail'} — bấm Đồng bộ ngay để lưu`);
+    }
+  };
+
+  const handleGoogleLogout = () => {
+    setGoogleAccessToken('');
+    setGoogleEmail('');
+    localStorage.removeItem('UT_BAKERY_GMAIL');
+    notify('Đã ngắt liên kết Gmail trên máy này');
+  };
+
   const handleManualSync = async () => {
     if (!navigator.onLine) {
       setSyncStatus('offline');
@@ -221,7 +262,7 @@ export function App() {
       return;
     }
     setSyncStatus('syncing');
-    const res = await syncToGoogleDrive(db);
+    const res = await syncToGoogleDrive(db, googleAccessToken || undefined);
     if (res.ok) {
       setSyncStatus('synced');
       setDb((prev) => ({
@@ -2731,8 +2772,52 @@ export function App() {
               </p>
 
               <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  value={db.config.googleDriveWebAppUrl}
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-2xl bg-[#FFFDF8]/80 border border-[#DDD2B5]">
+                    <div className="text-xs text-slate-700">
+                      {googleEmail ? (
+                        <>
+                          Gmail đang đăng nhập: <strong>{googleEmail}</strong> — đăng nhập cùng Gmail
+                          này trên máy khác để đồng bộ dữ liệu.
+                        </>
+                      ) : (
+                        <>
+                          Chưa đăng nhập Gmail — nhập Client ID và bấm <strong>Đăng nhập Gmail</strong>{' '}
+                          để đồng bộ theo tài khoản.
+                        </>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleGoogleLogin}
+                        className="px-3.5 py-1.5 rounded-xl gold-badge text-xs font-semibold"
+                      >
+                        {googleEmail ? 'Đổi tài khoản Gmail' : 'Đăng nhập Gmail'}
+                      </button>
+                      {googleEmail && (
+                        <button
+                          type="button"
+                          onClick={handleGoogleLogout}
+                          className="px-3 py-1.5 rounded-xl bg-[#FFFDF8] border border-[#DDD2B5] text-xs font-medium text-slate-700"
+                        >
+                          Đăng xuất
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <input
+                    value={googleClientId}
+                    onChange={(e) => {
+                      setGoogleClientId(e.target.value);
+                      localStorage.setItem('UT_BAKERY_GCLIENT_ID', e.target.value);
+                    }}
+                    placeholder="Google OAuth Client ID (VD: xxx.apps.googleusercontent.com)"
+                    className="flex-1 px-3.5 py-2 rounded-xl bg-[#FFFDF8]/90 border border-[#DDD2B5] text-sm"
+                  />
+
+                  <input
+                    value={db.config.googleDriveWebAppUrl}
                   onChange={(e) =>
                     setDb((prev) => ({
                       ...prev,
@@ -3182,6 +3267,9 @@ export function App() {
 }
 
 export default App;
+
+
+
 
 
 
