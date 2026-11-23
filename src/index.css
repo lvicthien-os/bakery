@@ -1,0 +1,18 @@
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-gradient-to-br from-amber-50/80 via-slate-50 to-orange-50/70 text-slate-800 antialiased min-h-screen;
+  }
+}
+
+.liquid-glass {
+  @apply bg-white/75 backdrop-blur-xl border border-white/80 shadow-[0_8px_32px_rgba(31,38,135,0.06)];
+}
+
+.gold-badge {
+  background: linear-gradient(135deg, #F3D06B 0%, #D4AF37 50%, #B88E1E 100%);
+  @apply text-white font-bold shadow-sm border border-amber-200/60;
+}
