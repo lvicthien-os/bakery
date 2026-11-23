@@ -1197,7 +1197,7 @@ export function App() {
             <button
               onClick={handleExportCsv}
               title="Xuất CSV"
-              className="w-9 h-9 rounded-full bg-slate-900 hover:bg-[#FFFDF8] text-slate-900 flex items-center justify-center transition shadow-sm"
+              className="w-9 h-9 rounded-full bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center transition shadow-sm"
             >
               <Download className="w-4 h-4" />
             </button>
@@ -1487,7 +1487,7 @@ export function App() {
                   }}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1 ${
                     orderSubView === 'schedule' && calendarMode === 'list'
-                      ? 'bg-slate-900 text-slate-900'
+                      ? 'gold-badge'
                       : 'text-slate-600'
                   }`}
                 >
@@ -1501,7 +1501,7 @@ export function App() {
                   }}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1 ${
                     orderSubView === 'schedule' && calendarMode === 'week'
-                      ? 'bg-slate-900 text-slate-900'
+                      ? 'gold-badge'
                       : 'text-slate-600'
                   }`}
                 >
@@ -1515,7 +1515,7 @@ export function App() {
                   }}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1 ${
                     orderSubView === 'schedule' && calendarMode === 'month'
-                      ? 'bg-slate-900 text-slate-900'
+                      ? 'gold-badge'
                       : 'text-slate-600'
                   }`}
                 >
@@ -1923,7 +1923,7 @@ export function App() {
                 <button
                   onClick={() => setPartnerSubView('finance')}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium ${
-                    partnerSubView === 'finance' ? 'bg-slate-900 text-slate-900' : 'text-slate-600'
+                    partnerSubView === 'finance' ? 'gold-badge' : 'text-slate-600'
                   }`}
                 >
                   Thu Chi
@@ -1931,7 +1931,7 @@ export function App() {
                 <button
                   onClick={() => setPartnerSubView('customers')}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium ${
-                    partnerSubView === 'customers' ? 'bg-slate-900 text-slate-900' : 'text-slate-600'
+                    partnerSubView === 'customers' ? 'gold-badge' : 'text-slate-600'
                   }`}
                 >
                   Khách hàng ({db.customers.length})
@@ -1939,7 +1939,7 @@ export function App() {
                 <button
                   onClick={() => setPartnerSubView('suppliers')}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium ${
-                    partnerSubView === 'suppliers' ? 'bg-slate-900 text-slate-900' : 'text-slate-600'
+                    partnerSubView === 'suppliers' ? 'gold-badge' : 'text-slate-600'
                   }`}
                 >
                   Nhà cung cấp
@@ -1947,7 +1947,7 @@ export function App() {
                 <button
                   onClick={() => setPartnerSubView('staff')}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium ${
-                    partnerSubView === 'staff' ? 'bg-slate-900 text-slate-900' : 'text-slate-600'
+                    partnerSubView === 'staff' ? 'gold-badge' : 'text-slate-600'
                   }`}
                 >
                   Nhân viên
@@ -2073,7 +2073,7 @@ export function App() {
                       <button
                         onClick={() => setTxFilter('all')}
                         className={`px-2.5 py-1 rounded-full text-xs font-medium ${
-                          txFilter === 'all' ? 'bg-slate-900 text-slate-900' : 'bg-white/80 text-slate-600'
+                          txFilter === 'all' ? 'gold-badge' : 'bg-white/80 text-slate-600'
                         }`}
                       >
                         Tất cả
@@ -2738,5 +2738,6 @@ export function App() {
 }
 
 export default App;
+
 
 
