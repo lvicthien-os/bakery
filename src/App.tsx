@@ -10,7 +10,6 @@ import {
   RefreshCw,
   AlertTriangle,
   Search,
-  Phone,
   Clock,
   CheckCircle2,
   Users,
@@ -23,6 +22,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Upload,
+  List,
+  CalendarDays,
+  FileText,
 } from 'lucide-react';
 import type {
   BakeryDatabase,
@@ -35,6 +37,7 @@ import type {
   SyncStatus,
 } from './types/bakery';
 import {
+  clearAllDatabaseData,
   exportDatabaseToCsv,
   hasPendingDriveSync,
   importDatabaseFromCsv,
@@ -70,18 +73,37 @@ function toIsoDate(year: number, monthZeroBased: number, day: number): string {
   return `${year}-${String(monthZeroBased + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
+function parseVietnameseOrIsoDate(raw: string, fallbackIso: string): string {
+  const clean = raw.trim();
+  const dmy = clean.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmy) {
+    return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    return clean;
+  }
+  return fallbackIso;
+}
+
+function parseMoneyNumber(raw?: string): number {
+  if (!raw) return 0;
+  const digits = raw.replace(/[^\d]/g, '');
+  return Number(digits) || 0;
+}
+
 export function App() {
   const [db, setDb] = useState<BakeryDatabase>(() => loadLocalDatabase());
   const [activeTab, setActiveTab] = useState<MainTab>('dashboard');
   const [orderSubView, setOrderSubView] = useState<'schedule' | 'orders' | 'production'>('schedule');
+  const [calendarMode, setCalendarMode] = useState<'list' | 'week' | 'month'>('month');
   const [partnerSubView, setPartnerSubView] = useState<'finance' | 'customers' | 'suppliers' | 'staff'>('finance');
+  const [txFilter, setTxFilter] = useState<'all' | 'income' | 'expense'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
     !navigator.onLine ? 'offline' : hasPendingDriveSync() ? 'syncing' : 'synced'
   );
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  // Lịch Âm / Dương state
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const [selectedDate, setSelectedDate] = useState<string>(todayIso);
   const [calendarCursor, setCalendarCursor] = useState(() => {
@@ -89,7 +111,7 @@ export function App() {
     return { year: now.getFullYear(), month: now.getMonth() };
   });
 
-  // Modal Thêm nhanh (Quick Add)
+  // Modal Thêm nhanh
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddMode, setQuickAddMode] = useState<'order' | 'product' | 'customer' | 'transaction'>('order');
 
@@ -103,6 +125,9 @@ export function App() {
   const [deliveryDate, setDeliveryDate] = useState<string>(todayIso);
   const [deliveryTime, setDeliveryTime] = useState('15:00');
   const [orderNote, setOrderNote] = useState('');
+
+  // Thêm hàng loạt đơn bánh (giống LIT Schedule)
+  const [bulkText, setBulkText] = useState('');
 
   // Form Dịch vụ / Sản phẩm bánh (Tạo & Sửa)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -126,13 +151,15 @@ export function App() {
   const [newIngCost, setNewIngCost] = useState(0.1);
   const [newIngMin, setNewIngMin] = useState(300);
 
-  // Form Thu / Chi
+  // Form Thu / Chi (Tạo & Sửa)
+  const [editingTxId, setEditingTxId] = useState<string | null>(null);
   const [txType, setTxType] = useState<'income' | 'expense'>('income');
   const [txCategory, setTxCategory] = useState('Bán lẻ tại tiệm');
   const [txAmount, setTxAmount] = useState(0);
   const [txNote, setTxNote] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const jsonInputRef = useRef<HTMLInputElement | null>(null);
 
   const notify = (msg: string) => {
     setToastMsg(msg);
@@ -199,7 +226,7 @@ export function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `UT_BAKERY_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `UT_BAKERY_${todayIso}.csv`;
     link.click();
     URL.revokeObjectURL(url);
     notify('Đã xuất file CSV');
@@ -211,6 +238,7 @@ export function App() {
     try {
       const text = await file.text();
       const imported = importDatabaseFromCsv(text, db);
+      saveLocalDatabase(imported);
       setDb(imported);
       notify('Đã nhập dữ liệu từ CSV');
     } catch (err) {
@@ -218,6 +246,57 @@ export function App() {
     } finally {
       e.target.value = '';
     }
+  };
+
+  const handleExportJson = () => {
+    const blob = new Blob([JSON.stringify(db, null, 2)], {
+      type: 'application/json;charset=utf-8;',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `UTBakery_data_${todayIso}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    notify('Đã tải file JSON');
+  };
+
+  const handleImportJsonFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw) as Partial<BakeryDatabase>;
+      const nextDb: BakeryDatabase = {
+        ingredients: Array.isArray(parsed.ingredients) ? parsed.ingredients : [],
+        products: Array.isArray(parsed.products) ? parsed.products : [],
+        orders: Array.isArray(parsed.orders) ? parsed.orders : [],
+        transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
+        customers: Array.isArray(parsed.customers) ? parsed.customers : [],
+        suppliers: Array.isArray(parsed.suppliers) ? parsed.suppliers : [],
+        staff: Array.isArray(parsed.staff) ? parsed.staff : [],
+        config: {
+          ...db.config,
+          ...(parsed.config || {}),
+        },
+      };
+      saveLocalDatabase(nextDb);
+      setDb(nextDb);
+      notify('Đã nhập dữ liệu từ JSON');
+    } catch {
+      notify('File JSON không hợp lệ');
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handleResetAllToZero = () => {
+    if (!window.confirm('Xóa toàn bộ dữ liệu đơn hàng, khách hàng, sản phẩm, kho và thu/chi về 0?')) {
+      return;
+    }
+    const cleared = clearAllDatabaseData(db.config);
+    setDb(cleared);
+    notify('Đã xóa toàn bộ dữ liệu về 0');
   };
 
   const ingredientMap = useMemo(() => {
@@ -236,42 +315,174 @@ export function App() {
   };
 
   const stats = useMemo(() => {
-    const totalIncome = db.transactions
+    const activeOrders = db.orders.filter((o) => o.status !== 'cancelled');
+    const totalExpectedRevenue = activeOrders.reduce((s, o) => s + o.totalAmount, 0);
+    const totalPaidOrders = activeOrders.reduce(
+      (s, o) => s + (o.isPaidFull ? o.totalAmount : o.depositAmount),
+      0
+    );
+    const totalRemainingDebt = activeOrders.reduce((s, o) => s + o.remainingAmount, 0);
+
+    const totalIncomeTx = db.transactions
       .filter((t) => t.type === 'income')
       .reduce((s, t) => s + t.amount, 0);
-    const totalExpense = db.transactions
+    const totalExpenseTx = db.transactions
       .filter((t) => t.type === 'expense')
       .reduce((s, t) => s + t.amount, 0);
-    const netProfit = totalIncome - totalExpense;
-    const totalRemainingDebt = db.orders
-      .filter((o) => o.status !== 'cancelled')
-      .reduce((s, o) => s + o.remainingAmount, 0);
+
+    const totalCashIn = totalPaidOrders + totalIncomeTx;
+    const netExpectedProfit = totalExpectedRevenue - totalExpenseTx;
+    const netActualProfit = totalCashIn - totalExpenseTx;
 
     const lowStockItems = db.ingredients.filter((i) => i.stockQuantity <= i.minStockAlert);
-
     const now = new Date();
-    const urgentOrders = db.orders.filter((o) => {
-      if (o.status === 'delivered' || o.status === 'cancelled') return false;
+    const urgentOrders = activeOrders.filter((o) => {
+      if (o.status === 'delivered') return false;
       const target = new Date(`${o.deliveryDate}T${o.deliveryTime || '23:59'}`);
       const diffMins = (target.getTime() - now.getTime()) / 60000;
       return diffMins <= (db.config.deliveryReminderMinutes || 90);
     });
 
     return {
-      totalIncome,
-      totalExpense,
-      netProfit,
+      totalExpectedRevenue,
+      totalCashIn,
       totalRemainingDebt,
+      totalExpenseTx,
+      netExpectedProfit,
+      netActualProfit,
       lowStockItems,
       urgentOrders,
     };
   }, [db]);
 
-  // Lưới ngày cho Lịch Âm / Dương tháng hiện tại
+  // Phân tích các dòng nhập hàng loạt (text nhiều dòng)
+  const parsedBulkOrders = useMemo(() => {
+    const lines = bulkText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    return lines
+      .map((line, idx) => {
+        const parts = line.split(/\s*-\s*/);
+        if (parts.length < 3) return null;
+        const dishName = parts[0]?.trim() || 'Bánh đặt';
+        const cusName = parts[1]?.trim() || 'Khách lẻ';
+        const dateIso = parseVietnameseOrIsoDate(parts[2] || '', todayIso);
+        const timeRaw = parts[3]?.trim() || '12:00';
+        const timeMatch = timeRaw.match(/(\d{1,2}:\d{2})/);
+        const timeVal = timeMatch ? timeMatch[1].padStart(5, '0') : '12:00';
+        const totalVal = parseMoneyNumber(parts[4]);
+        const depositVal = parseMoneyNumber(parts[5]);
+        const noteVal = parts.slice(6).join(' - ').trim();
+
+        return {
+          index: idx,
+          dishName,
+          cusName,
+          dateIso,
+          timeVal,
+          totalVal,
+          depositVal,
+          noteVal,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  }, [bulkText, todayIso]);
+
+  const handleImportBulkOrders = () => {
+    if (parsedBulkOrders.length === 0) return;
+
+    setDb((prev) => {
+      const nextOrders = [...prev.orders];
+      const nextCustomers = [...prev.customers];
+      const nextTransactions = [...prev.transactions];
+
+      parsedBulkOrders.forEach((b, i) => {
+        const code = `UTB-${b.dateIso.slice(5, 10).replace('-', '')}-B${String(
+          prev.orders.length + i + 1
+        ).padStart(2, '0')}`;
+        const safeDeposit = Math.min(b.depositVal, b.totalVal);
+        const remaining = Math.max(0, b.totalVal - safeDeposit);
+
+        const orderObj: BakeryOrder = {
+          id: `ord-bulk-${Date.now()}-${i}`,
+          orderCode: code,
+          customerId: `cus-${b.cusName}`,
+          customerName: b.cusName,
+          customerPhone: '',
+          deliveryDate: b.dateIso,
+          deliveryTime: b.timeVal,
+          items: [
+            {
+              productId: prev.products[0]?.id || 'prod-custom',
+              productName: b.dishName,
+              quantity: 1,
+              unitPrice: b.totalVal,
+              note: b.noteVal || undefined,
+            },
+          ],
+          totalAmount: b.totalVal,
+          depositAmount: safeDeposit,
+          remainingAmount: remaining,
+          isPaidFull: b.totalVal > 0 && remaining === 0,
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+        };
+        nextOrders.unshift(orderObj);
+
+        const cusIdx = nextCustomers.findIndex(
+          (c) => c.name.toLowerCase() === b.cusName.toLowerCase()
+        );
+        if (cusIdx >= 0) {
+          nextCustomers[cusIdx] = {
+            ...nextCustomers[cusIdx],
+            totalSpent: nextCustomers[cusIdx].totalSpent + b.totalVal,
+            orderCount: nextCustomers[cusIdx].orderCount + 1,
+          };
+        } else {
+          nextCustomers.unshift({
+            id: `cus-bulk-${Date.now()}-${i}`,
+            name: b.cusName,
+            phone: '',
+            preferences: b.noteVal || undefined,
+            totalSpent: b.totalVal,
+            orderCount: 1,
+          });
+        }
+
+        if (safeDeposit > 0) {
+          nextTransactions.unshift({
+            id: `tx-bulk-${Date.now()}-${i}`,
+            date: todayIso,
+            type: 'income',
+            category: 'Tiền cọc đơn hàng',
+            amount: safeDeposit,
+            referenceCode: code,
+            note: `Cọc đơn ${code} - ${b.cusName}`,
+          });
+        }
+      });
+
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        orders: nextOrders,
+        customers: nextCustomers,
+        transactions: nextTransactions,
+      };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
+
+    const count = parsedBulkOrders.length;
+    setBulkText('');
+    notify(`Đã thêm thành công ${count} đơn bánh và cập nhật đồng bộ`);
+  };
+
   const calendarDays = useMemo(() => {
     const { year, month } = calendarCursor;
     const firstDay = new Date(year, month, 1);
-    const startOffset = (firstDay.getDay() + 6) % 7; // Thứ 2 = 0
+    const startOffset = (firstDay.getDay() + 6) % 7;
     const daysInMonth = new Date(year, month + 1, 0).getDate();
 
     const cells: {
@@ -335,7 +546,14 @@ export function App() {
     [sortedOrders, selectedDate]
   );
 
-  // Mở modal thêm nhanh
+  const upcomingOrders = useMemo(
+    () =>
+      sortedOrders.filter(
+        (o) => o.deliveryDate >= todayIso && o.status !== 'cancelled'
+      ),
+    [sortedOrders, todayIso]
+  );
+
   const openQuickAdd = (
     mode: 'order' | 'product' | 'customer' | 'transaction',
     presetDate?: string
@@ -364,6 +582,7 @@ export function App() {
       setCusFormPhone('');
       setCusFormPref('');
     } else {
+      setEditingTxId(null);
       setTxType('income');
       setTxCategory('Bán lẻ tại tiệm');
       setTxAmount(0);
@@ -389,41 +608,47 @@ export function App() {
   const handleSaveOrder = (e: React.FormEvent) => {
     e.preventDefault();
     const product = db.products.find((p) => p.id === selectedProductId) || db.products[0];
-    if (!customerName.trim() || !product) return;
+    const finalProductName = product ? product.name : 'Bánh theo yêu cầu';
+    const finalUnitPrice = product ? product.sellingPrice : 0;
+    if (!customerName.trim()) return;
 
     const safeQty = Math.max(1, quantity);
-    const total = product.sellingPrice * safeQty;
+    const total = finalUnitPrice * safeQty;
     const safeDeposit = Math.max(0, Math.min(deposit, total));
     const remaining = total - safeDeposit;
 
     if (editingOrder) {
-      setDb((prev) => ({
-        ...prev,
-        orders: prev.orders.map((o) =>
-          o.id === editingOrder.id
-            ? {
-                ...o,
-                customerName: customerName.trim(),
-                customerPhone: customerPhone.trim(),
-                deliveryDate,
-                deliveryTime,
-                items: [
-                  {
-                    productId: product.id,
-                    productName: product.name,
-                    quantity: safeQty,
-                    unitPrice: product.sellingPrice,
-                    note: orderNote.trim() || undefined,
-                  },
-                ],
-                totalAmount: total,
-                depositAmount: safeDeposit,
-                remainingAmount: remaining,
-                isPaidFull: remaining === 0,
-              }
-            : o
-        ),
-      }));
+      setDb((prev) => {
+        const nextDb: BakeryDatabase = {
+          ...prev,
+          orders: prev.orders.map((o) =>
+            o.id === editingOrder.id
+              ? {
+                  ...o,
+                  customerName: customerName.trim(),
+                  customerPhone: customerPhone.trim(),
+                  deliveryDate,
+                  deliveryTime,
+                  items: [
+                    {
+                      productId: product?.id || o.items[0]?.productId || 'prod-custom',
+                      productName: finalProductName,
+                      quantity: safeQty,
+                      unitPrice: finalUnitPrice,
+                      note: orderNote.trim() || undefined,
+                    },
+                  ],
+                  totalAmount: total,
+                  depositAmount: safeDeposit,
+                  remainingAmount: remaining,
+                  isPaidFull: remaining === 0,
+                }
+              : o
+          ),
+        };
+        saveLocalDatabase(nextDb);
+        return nextDb;
+      });
       setEditingOrder(null);
       setQuickAddOpen(false);
       notify(`Đã cập nhật đơn ${editingOrder.orderCode}`);
@@ -444,10 +669,10 @@ export function App() {
       deliveryTime,
       items: [
         {
-          productId: product.id,
-          productName: product.name,
+          productId: product?.id || 'prod-custom',
+          productName: finalProductName,
           quantity: safeQty,
-          unitPrice: product.sellingPrice,
+          unitPrice: finalUnitPrice,
           note: orderNote.trim() || undefined,
         },
       ],
@@ -459,50 +684,54 @@ export function App() {
       createdAt: new Date().toISOString(),
     };
 
-    const nextTransactions = [...db.transactions];
-    if (safeDeposit > 0) {
-      nextTransactions.unshift({
-        id: `tx-${Date.now()}`,
-        date: todayIso,
-        type: 'income',
-        category: remaining === 0 ? 'Thanh toán đơn bánh' : 'Tiền cọc đơn hàng',
-        amount: safeDeposit,
-        referenceCode: code,
-        note: `${remaining === 0 ? 'Thanh toán' : 'Cọc'} đơn ${code} - ${newOrder.customerName}`,
-      });
-    }
+    setDb((prev) => {
+      const nextTransactions = [...prev.transactions];
+      if (safeDeposit > 0) {
+        nextTransactions.unshift({
+          id: `tx-${Date.now()}`,
+          date: todayIso,
+          type: 'income',
+          category: remaining === 0 ? 'Thanh toán đơn bánh' : 'Tiền cọc đơn hàng',
+          amount: safeDeposit,
+          referenceCode: code,
+          note: `${remaining === 0 ? 'Thanh toán' : 'Cọc'} đơn ${code} - ${newOrder.customerName}`,
+        });
+      }
 
-    const existingCusIndex = db.customers.findIndex(
-      (c) =>
-        c.name.toLowerCase() === newOrder.customerName.toLowerCase() ||
-        (newOrder.customerPhone && c.phone === newOrder.customerPhone)
-    );
+      const existingCusIndex = prev.customers.findIndex(
+        (c) =>
+          c.name.toLowerCase() === newOrder.customerName.toLowerCase() ||
+          (newOrder.customerPhone && c.phone === newOrder.customerPhone)
+      );
 
-    const nextCustomers = [...db.customers];
-    if (existingCusIndex >= 0) {
-      nextCustomers[existingCusIndex] = {
-        ...nextCustomers[existingCusIndex],
-        phone: newOrder.customerPhone || nextCustomers[existingCusIndex].phone,
-        totalSpent: nextCustomers[existingCusIndex].totalSpent + total,
-        orderCount: nextCustomers[existingCusIndex].orderCount + 1,
+      const nextCustomers = [...prev.customers];
+      if (existingCusIndex >= 0) {
+        nextCustomers[existingCusIndex] = {
+          ...nextCustomers[existingCusIndex],
+          phone: newOrder.customerPhone || nextCustomers[existingCusIndex].phone,
+          totalSpent: nextCustomers[existingCusIndex].totalSpent + total,
+          orderCount: nextCustomers[existingCusIndex].orderCount + 1,
+        };
+      } else {
+        nextCustomers.unshift({
+          id: `cus-${Date.now()}`,
+          name: newOrder.customerName,
+          phone: newOrder.customerPhone,
+          preferences: orderNote.trim() || undefined,
+          totalSpent: total,
+          orderCount: 1,
+        });
+      }
+
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        orders: [newOrder, ...prev.orders],
+        transactions: nextTransactions,
+        customers: nextCustomers,
       };
-    } else {
-      nextCustomers.unshift({
-        id: `cus-${Date.now()}`,
-        name: newOrder.customerName,
-        phone: newOrder.customerPhone,
-        preferences: orderNote.trim() || undefined,
-        totalSpent: total,
-        orderCount: 1,
-      });
-    }
-
-    setDb((prev) => ({
-      ...prev,
-      orders: [newOrder, ...prev.orders],
-      transactions: nextTransactions,
-      customers: nextCustomers,
-    }));
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
 
     setSelectedDate(deliveryDate);
     setQuickAddOpen(false);
@@ -511,10 +740,15 @@ export function App() {
 
   const handleDeleteOrder = (ord: BakeryOrder) => {
     if (!window.confirm(`Xóa đơn hàng ${ord.orderCode} của khách ${ord.customerName}?`)) return;
-    setDb((prev) => ({
-      ...prev,
-      orders: prev.orders.filter((o) => o.id !== ord.id),
-    }));
+    setDb((prev) => {
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        orders: prev.orders.filter((o) => o.id !== ord.id),
+        transactions: prev.transactions.filter((t) => t.referenceCode !== ord.orderCode),
+      };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
     notify(`Đã xóa đơn ${ord.orderCode}`);
   };
 
@@ -562,17 +796,18 @@ export function App() {
         });
       }
 
-      return {
+      const nextDb: BakeryDatabase = {
         ...prev,
         orders: nextOrders,
         ingredients: nextIngredients,
         transactions: nextTx,
       };
+      saveLocalDatabase(nextDb);
+      return nextDb;
     });
     notify(`Cập nhật: ${STATUS_LABEL[nextStatus]}`);
   };
 
-  // Thêm / Sửa / Xóa Dịch vụ & Sản phẩm bánh
   const openEditProduct = (prod: Product) => {
     setEditingProduct(prod);
     setProdName(prod.name);
@@ -590,21 +825,25 @@ export function App() {
     const cleanRecipe = prodRecipe.filter((r) => r.ingredientId && r.quantity > 0);
 
     if (editingProduct) {
-      setDb((prev) => ({
-        ...prev,
-        products: prev.products.map((p) =>
-          p.id === editingProduct.id
-            ? {
-                ...p,
-                name: prodName.trim(),
-                category: prodCategory.trim() || 'Bánh',
-                sellingPrice: Number(prodPrice) || 0,
-                prepTimeMinutes: Number(prodPrepMins) || 60,
-                recipe: cleanRecipe,
-              }
-            : p
-        ),
-      }));
+      setDb((prev) => {
+        const nextDb: BakeryDatabase = {
+          ...prev,
+          products: prev.products.map((p) =>
+            p.id === editingProduct.id
+              ? {
+                  ...p,
+                  name: prodName.trim(),
+                  category: prodCategory.trim() || 'Bánh',
+                  sellingPrice: Number(prodPrice) || 0,
+                  prepTimeMinutes: Number(prodPrepMins) || 60,
+                  recipe: cleanRecipe,
+                }
+              : p
+          ),
+        };
+        saveLocalDatabase(nextDb);
+        return nextDb;
+      });
       setEditingProduct(null);
       setQuickAddOpen(false);
       notify('Đã cập nhật dịch vụ / loại bánh');
@@ -619,10 +858,14 @@ export function App() {
       prepTimeMinutes: Number(prodPrepMins) || 60,
       recipe: cleanRecipe,
     };
-    setDb((prev) => ({
-      ...prev,
-      products: [newProd, ...prev.products],
-    }));
+    setDb((prev) => {
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        products: [newProd, ...prev.products],
+      };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
     setSelectedProductId(newProd.id);
     setQuickAddOpen(false);
     notify('Đã thêm dịch vụ / loại bánh mới');
@@ -630,14 +873,17 @@ export function App() {
 
   const handleDeleteProduct = (prod: Product) => {
     if (!window.confirm(`Xóa dịch vụ/bánh "${prod.name}"?`)) return;
-    setDb((prev) => ({
-      ...prev,
-      products: prev.products.filter((p) => p.id !== prod.id),
-    }));
+    setDb((prev) => {
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        products: prev.products.filter((p) => p.id !== prod.id),
+      };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
     notify(`Đã xóa ${prod.name}`);
   };
 
-  // Thêm / Sửa / Xóa Khách hàng
   const openEditCustomer = (cus: Customer) => {
     setEditingCustomer(cus);
     setCusFormName(cus.name);
@@ -652,93 +898,141 @@ export function App() {
     if (!cusFormName.trim()) return;
 
     if (editingCustomer) {
-      setDb((prev) => ({
-        ...prev,
-        customers: prev.customers.map((c) =>
-          c.id === editingCustomer.id
-            ? {
-                ...c,
-                name: cusFormName.trim(),
-                phone: cusFormPhone.trim(),
-                preferences: cusFormPref.trim() || undefined,
-              }
-            : c
-        ),
-      }));
+      setDb((prev) => {
+        const nextDb: BakeryDatabase = {
+          ...prev,
+          customers: prev.customers.map((c) =>
+            c.id === editingCustomer.id
+              ? {
+                  ...c,
+                  name: cusFormName.trim(),
+                  phone: cusFormPhone.trim(),
+                  preferences: cusFormPref.trim() || undefined,
+                }
+              : c
+          ),
+          orders: prev.orders.map((o) =>
+            o.customerId === editingCustomer.id ||
+            o.customerName.toLowerCase() === editingCustomer.name.toLowerCase()
+              ? {
+                  ...o,
+                  customerName: cusFormName.trim(),
+                  customerPhone: cusFormPhone.trim(),
+                }
+              : o
+          ),
+        };
+        saveLocalDatabase(nextDb);
+        return nextDb;
+      });
       setEditingCustomer(null);
       setQuickAddOpen(false);
       notify('Đã cập nhật thông tin khách hàng');
       return;
     }
 
-    setDb((prev) => ({
-      ...prev,
-      customers: [
-        {
-          id: `cus-${Date.now()}`,
-          name: cusFormName.trim(),
-          phone: cusFormPhone.trim(),
-          preferences: cusFormPref.trim() || undefined,
-          totalSpent: 0,
-          orderCount: 0,
-        },
-        ...prev.customers,
-      ],
-    }));
+    setDb((prev) => {
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        customers: [
+          {
+            id: `cus-${Date.now()}`,
+            name: cusFormName.trim(),
+            phone: cusFormPhone.trim(),
+            preferences: cusFormPref.trim() || undefined,
+            totalSpent: 0,
+            orderCount: 0,
+          },
+          ...prev.customers,
+        ],
+      };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
     setQuickAddOpen(false);
     notify('Đã thêm khách hàng mới');
   };
 
   const handleDeleteCustomer = (cus: Customer) => {
-    if (!window.confirm(`Xóa khách hàng "${cus.name}"?`)) return;
-    setDb((prev) => ({
-      ...prev,
-      customers: prev.customers.filter((c) => c.id !== cus.id),
-    }));
-    notify(`Đã xóa khách ${cus.name}`);
+    if (!window.confirm(`Xóa khách hàng "${cus.name}" và các đơn/giao dịch liên quan?`)) return;
+    const relatedOrderCodes = new Set(
+      db.orders
+        .filter(
+          (o) =>
+            o.customerId === cus.id ||
+            o.customerName.toLowerCase() === cus.name.toLowerCase() ||
+            (cus.phone && o.customerPhone === cus.phone)
+        )
+        .map((o) => o.orderCode)
+    );
+    setDb((prev) => {
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        customers: prev.customers.filter((c) => c.id !== cus.id),
+        orders: prev.orders.filter(
+          (o) =>
+            o.customerId !== cus.id &&
+            o.customerName.toLowerCase() !== cus.name.toLowerCase() &&
+            !(cus.phone && o.customerPhone === cus.phone)
+        ),
+        transactions: prev.transactions.filter(
+          (t) => !t.referenceCode || !relatedOrderCodes.has(t.referenceCode)
+        ),
+      };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
+    notify(`Đã xóa khách ${cus.name} & đồng bộ dữ liệu`);
   };
 
-  // Thêm / Sửa / Xóa Nguyên liệu kho
   const handleSaveIngredient = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newIngName.trim()) return;
 
     if (editingIngredient) {
-      setDb((prev) => ({
-        ...prev,
-        ingredients: prev.ingredients.map((i) =>
-          i.id === editingIngredient.id
-            ? {
-                ...i,
-                name: newIngName.trim(),
-                unit: newIngUnit.trim() || 'g',
-                stockQuantity: Number(newIngStock) || 0,
-                costPerUnit: Number(newIngCost) || 0,
-                minStockAlert: Number(newIngMin) || 0,
-              }
-            : i
-        ),
-      }));
+      setDb((prev) => {
+        const nextDb: BakeryDatabase = {
+          ...prev,
+          ingredients: prev.ingredients.map((i) =>
+            i.id === editingIngredient.id
+              ? {
+                  ...i,
+                  name: newIngName.trim(),
+                  unit: newIngUnit.trim() || 'g',
+                  stockQuantity: Number(newIngStock) || 0,
+                  costPerUnit: Number(newIngCost) || 0,
+                  minStockAlert: Number(newIngMin) || 0,
+                }
+              : i
+          ),
+        };
+        saveLocalDatabase(nextDb);
+        return nextDb;
+      });
       setEditingIngredient(null);
       setNewIngName('');
       notify('Đã cập nhật nguyên liệu');
       return;
     }
 
-    setDb((prev) => ({
-      ...prev,
-      ingredients: [
-        {
-          id: `ing-${Date.now()}`,
-          name: newIngName.trim(),
-          unit: newIngUnit.trim() || 'g',
-          stockQuantity: Number(newIngStock) || 0,
-          costPerUnit: Number(newIngCost) || 0,
-          minStockAlert: Number(newIngMin) || 0,
-        },
-        ...prev.ingredients,
-      ],
-    }));
+    setDb((prev) => {
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        ingredients: [
+          {
+            id: `ing-${Date.now()}`,
+            name: newIngName.trim(),
+            unit: newIngUnit.trim() || 'g',
+            stockQuantity: Number(newIngStock) || 0,
+            costPerUnit: Number(newIngCost) || 0,
+            minStockAlert: Number(newIngMin) || 0,
+          },
+          ...prev.ingredients,
+        ],
+      };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
     setNewIngName('');
     notify('Đã thêm nguyên liệu');
   };
@@ -754,35 +1048,80 @@ export function App() {
 
   const handleDeleteIngredient = (ing: Ingredient) => {
     if (!window.confirm(`Xóa nguyên liệu "${ing.name}"?`)) return;
-    setDb((prev) => ({
-      ...prev,
-      ingredients: prev.ingredients.filter((i) => i.id !== ing.id),
-    }));
+    setDb((prev) => {
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        ingredients: prev.ingredients.filter((i) => i.id !== ing.id),
+      };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
     notify(`Đã xóa ${ing.name}`);
   };
 
   const handleAddTransaction = (e: React.FormEvent) => {
     e.preventDefault();
     if (!txAmount || txAmount <= 0) return;
-    setDb((prev) => ({
-      ...prev,
-      transactions: [
-        {
-          id: `tx-${Date.now()}`,
-          date: todayIso,
-          type: txType,
-          category: txCategory.trim() || (txType === 'income' ? 'Thu khác' : 'Chi khác'),
-          amount: Number(txAmount),
-          note: txNote.trim(),
-        },
-        ...prev.transactions,
-      ],
-    }));
+    setDb((prev) => {
+      const nextTx = editingTxId
+        ? prev.transactions.map((t) =>
+            t.id === editingTxId
+              ? {
+                  ...t,
+                  type: txType,
+                  category: txCategory.trim() || (txType === 'income' ? 'Thu khác' : 'Chi khác'),
+                  amount: Number(txAmount),
+                  note: txNote.trim(),
+                }
+              : t
+          )
+        : [
+            {
+              id: `tx-${Date.now()}`,
+              date: todayIso,
+              type: txType,
+              category: txCategory.trim() || (txType === 'income' ? 'Thu khác' : 'Chi khác'),
+              amount: Number(txAmount),
+              note: txNote.trim(),
+            },
+            ...prev.transactions,
+          ];
+      const nextDb: BakeryDatabase = { ...prev, transactions: nextTx };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
+    setEditingTxId(null);
     setTxAmount(0);
     setTxNote('');
     setQuickAddOpen(false);
-    notify(txType === 'income' ? 'Đã ghi nhận khoản thu' : 'Đã ghi nhận khoản chi');
+    notify('Đã cập nhật sổ giao dịch');
   };
+
+  const handleDeleteTransaction = (txId: string) => {
+    if (!window.confirm('Xóa phiếu giao dịch này?')) return;
+    setDb((prev) => {
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        transactions: prev.transactions.filter((t) => t.id !== txId),
+      };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
+    notify('Đã xóa phiếu giao dịch');
+  };
+
+  const filteredTransactions = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return db.transactions.filter((t) => {
+      if (txFilter !== 'all' && t.type !== txFilter) return false;
+      if (!q) return true;
+      return (
+        t.category.toLowerCase().includes(q) ||
+        (t.note || '').toLowerCase().includes(q) ||
+        (t.referenceCode || '').toLowerCase().includes(q)
+      );
+    });
+  }, [db.transactions, txFilter, searchQuery]);
 
   const selectedDateInfo = useMemo(() => formatSolarWithLunar(selectedDate), [selectedDate]);
 
@@ -797,7 +1136,7 @@ export function App() {
 
   const tabs: { id: MainTab; label: string; icon: React.ReactNode }[] = [
     { id: 'dashboard', label: 'Tổng quan', icon: <LayoutDashboard className="w-4 h-4" /> },
-    { id: 'orders', label: 'Đơn & Lịch', icon: <ClipboardList className="w-4 h-4" /> },
+    { id: 'orders', label: 'Lịch & Đơn', icon: <ClipboardList className="w-4 h-4" /> },
     { id: 'catalog', label: 'Bánh & Kho', icon: <CakeSlice className="w-4 h-4" /> },
     { id: 'finance', label: 'Tài chính', icon: <Wallet className="w-4 h-4" /> },
     { id: 'settings', label: 'Cài đặt', icon: <Settings className="w-4 h-4" /> },
@@ -805,19 +1144,19 @@ export function App() {
 
   return (
     <div className="min-h-screen pb-20 md:pb-8">
-      {/* Thanh đầu trang Liquid Glass gọn gàng */}
+      {/* Header Liquid Glass sáng chuẩn LIT Schedule */}
       <header className="sticky top-0 z-30 liquid-glass border-b border-white/80">
         <div className="max-w-6xl mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             <span className="gold-badge px-3 py-1 rounded-full text-xs sm:text-sm tracking-wide shrink-0">
               {db.config.shopName}
             </span>
-            <span className="hidden sm:inline-block text-[11px] font-medium text-amber-800 bg-amber-100/75 px-2.5 py-0.5 rounded-full border border-amber-200/70">
-              {formatSolarWithLunar(todayIso).lunar.fullText}
-            </span>
+            <span
+              className={`w-2.5 h-2.5 rounded-full shrink-0 ${dotColorClass}`}
+              title={syncStatus}
+            />
           </div>
 
-          {/* Nav desktop */}
           <nav className="hidden md:flex items-center gap-1 bg-slate-100/70 p-1 rounded-2xl border border-white/70">
             {tabs.map((t) => {
               const active = activeTab === t.id;
@@ -838,20 +1177,18 @@ export function App() {
             })}
           </nav>
 
-          {/* Cụm thao tác nhanh bằng icon + chấm trạng thái đồng bộ */}
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               onClick={handleManualSync}
-              title={syncStatus}
-              aria-label="Sync status"
-              className="w-9 h-9 rounded-full bg-white/80 hover:bg-white border border-white flex items-center justify-center transition"
+              title="Đồng bộ"
+              className="w-9 h-9 rounded-full bg-sky-600 hover:bg-sky-700 text-white flex items-center justify-center transition shadow-sm"
             >
-              <span className={`w-2.5 h-2.5 rounded-full ${dotColorClass}`} />
+              <RefreshCw className="w-4 h-4" />
             </button>
 
             <button
               onClick={() => openQuickAdd('order')}
-              title="Thêm nhanh (Đơn, Dịch vụ, Khách, Thu/Chi)"
+              title="Thêm nhanh"
               className="w-9 h-9 rounded-full gold-badge flex items-center justify-center hover:brightness-105 transition"
             >
               <Plus className="w-4 h-4" />
@@ -860,23 +1197,14 @@ export function App() {
             <button
               onClick={handleExportCsv}
               title="Xuất CSV"
-              className="w-9 h-9 rounded-full bg-white/80 hover:bg-white border border-white text-slate-700 flex items-center justify-center transition"
+              className="w-9 h-9 rounded-full bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center transition shadow-sm"
             >
               <Download className="w-4 h-4" />
-            </button>
-
-            <button
-              onClick={() => setActiveTab('settings')}
-              title="Cài đặt"
-              className="w-9 h-9 rounded-full bg-white/80 hover:bg-white border border-white text-slate-700 flex items-center justify-center transition"
-            >
-              <Settings className="w-4 h-4" />
             </button>
           </div>
         </div>
       </header>
 
-      {/* Thông báo ngắn gọn */}
       {toastMsg && (
         <div className="fixed top-16 right-4 z-50 liquid-glass px-4 py-2.5 rounded-2xl text-xs font-medium text-slate-800 flex items-center gap-2">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -884,9 +1212,7 @@ export function App() {
         </div>
       )}
 
-      {/* Nội dung chính */}
       <main className="max-w-6xl mx-auto px-3 sm:px-6 pt-4 space-y-4">
-        {/* Cảnh báo nhanh */}
         {(stats.urgentOrders.length > 0 || stats.lowStockItems.length > 0) && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {stats.urgentOrders.length > 0 && (
@@ -928,381 +1254,437 @@ export function App() {
           </div>
         )}
 
-        {/* TAB 1: TỔNG QUAN */}
+        {/* TAB 1: TỔNG QUAN + TẠO ĐƠN + NHẬP HÀNG LOẠT (GIỐNG ẢNH 1) */}
         {activeTab === 'dashboard' && (
           <div className="space-y-4">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="liquid-glass rounded-2xl p-4">
-                <div className="text-xs text-slate-500">Tổng thu</div>
-                <div className="text-lg sm:text-xl font-bold text-slate-900 mt-1">
-                  {formatVnd(stats.totalIncome)}
+                <div className="text-xs text-slate-500">Tổng doanh thu dự kiến</div>
+                <div className="text-xl font-bold text-slate-900 mt-1">
+                  {formatVnd(stats.totalExpectedRevenue)}
                 </div>
               </div>
               <div className="liquid-glass rounded-2xl p-4">
-                <div className="text-xs text-slate-500">Tổng chi</div>
-                <div className="text-lg sm:text-xl font-bold text-rose-600 mt-1">
-                  {formatVnd(stats.totalExpense)}
+                <div className="text-xs text-slate-500">Đã thanh toán / Thu vào</div>
+                <div className="text-xl font-bold text-emerald-700 mt-1">
+                  {formatVnd(stats.totalCashIn)}
                 </div>
               </div>
               <div className="liquid-glass rounded-2xl p-4">
-                <div className="text-xs text-slate-500">Lợi nhuận ròng</div>
-                <div className="text-lg sm:text-xl font-bold text-emerald-700 mt-1">
-                  {formatVnd(stats.netProfit)}
-                </div>
-              </div>
-              <div className="liquid-glass rounded-2xl p-4">
-                <div className="text-xs text-slate-500">Công nợ khách còn lại</div>
-                <div className="text-lg sm:text-xl font-bold text-amber-700 mt-1">
+                <div className="text-xs text-slate-500">Công nợ còn lại</div>
+                <div className="text-xl font-bold text-rose-600 mt-1">
                   {formatVnd(stats.totalRemainingDebt)}
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="lg:col-span-2 liquid-glass rounded-3xl p-4 sm:p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h2 className="font-semibold text-slate-900 text-sm sm:text-base">
-                    Lịch giao & sản xuất gần nhất
-                  </h2>
-                  <button
-                    onClick={() => setActiveTab('orders')}
-                    className="text-xs font-medium text-amber-700 hover:underline"
-                  >
-                    Mở Lịch Âm/Dương ({db.orders.length})
-                  </button>
-                </div>
-
-                <div className="space-y-2.5">
-                  {sortedOrders.slice(0, 6).map((ord) => {
-                    const dl = formatSolarWithLunar(ord.deliveryDate);
-                    return (
-                      <div
-                        key={ord.id}
-                        className="p-3 rounded-2xl bg-white/65 border border-white flex flex-col sm:flex-row sm:items-center justify-between gap-2"
-                      >
-                        <div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-bold text-amber-900 bg-amber-100/90 px-2 py-0.5 rounded-lg">
-                              {dl.solarLabel} ({dl.lunar.shortText} ÂL) • {ord.deliveryTime}
-                            </span>
-                            <span className="font-semibold text-sm text-slate-900">
-                              {ord.customerName}
-                            </span>
-                            <span className={`text-[11px] px-2 py-0.5 rounded-full border ${STATUS_BADGE[ord.status]}`}>
-                              {STATUS_LABEL[ord.status]}
-                            </span>
-                          </div>
-                          <div className="text-xs text-slate-600 mt-1">
-                            {ord.items.map((i) => `${i.productName} x${i.quantity}`).join(', ')}
-                            {ord.items[0]?.note ? ` — "${ord.items[0].note}"` : ''}
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0">
-                          <div className="text-right">
-                            <div className="text-sm font-bold text-slate-900">
-                              {formatVnd(ord.totalAmount)}
-                            </div>
-                            <div className="text-[11px] text-slate-500">
-                              Còn: {formatVnd(ord.remainingAmount)}
-                            </div>
-                          </div>
-                          <button
-                            onClick={() => openEditOrder(ord)}
-                            title="Sửa đơn"
-                            className="p-2 rounded-xl bg-white/90 hover:bg-white text-slate-600"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="liquid-glass rounded-2xl p-4">
+                <div className="text-xs text-slate-500">Chi phí (Nguyên liệu & Vận hành)</div>
+                <div className="text-xl font-bold text-rose-600 mt-1">
+                  {formatVnd(stats.totalExpenseTx)}
                 </div>
               </div>
+              <div className="liquid-glass rounded-2xl p-4">
+                <div className="text-xs text-slate-500">Lợi nhuận ròng dự kiến</div>
+                <div className="text-xl font-bold text-sky-700 mt-1">
+                  {formatVnd(stats.netExpectedProfit)}
+                </div>
+              </div>
+              <div className="liquid-glass rounded-2xl p-4">
+                <div className="text-xs text-slate-500">Lợi nhuận thực tế</div>
+                <div className="text-xl font-bold text-emerald-700 mt-1">
+                  {formatVnd(stats.netActualProfit)}
+                </div>
+              </div>
+            </div>
 
-              <div className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h2 className="font-semibold text-slate-900 text-sm sm:text-base">
-                    Dịch vụ & Bánh
-                  </h2>
-                  <button
-                    onClick={() => openQuickAdd('product')}
-                    className="text-xs font-semibold text-amber-700 hover:underline"
+            {/* Khối Tạo đơn bánh nhanh */}
+            <div className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-3">
+              <h2 className="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-1.5">
+                <Plus className="w-4 h-4 text-sky-600" />
+                <span>Tạo đơn bánh mới</span>
+              </h2>
+              <form onSubmit={handleSaveOrder} className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <select
+                    value={selectedProductId}
+                    onChange={(e) => setSelectedProductId(e.target.value)}
+                    className="px-3.5 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
                   >
-                    + Thêm món
-                  </button>
+                    {db.products.length === 0 ? (
+                      <option value="">Bánh đặt theo yêu cầu</option>
+                    ) : (
+                      db.products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} ({formatVnd(p.sellingPrice)})
+                        </option>
+                      ))
+                    )}
+                  </select>
+
+                  <input
+                    required
+                    list="dash-cus-list"
+                    value={customerName}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCustomerName(val);
+                      const found = db.customers.find(
+                        (c) => c.name.toLowerCase() === val.toLowerCase()
+                      );
+                      if (found?.phone) setCustomerPhone(found.phone);
+                    }}
+                    placeholder="Tên khách hàng *"
+                    className="px-3.5 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
+                  />
+                  <datalist id="dash-cus-list">
+                    {db.customers.map((c) => (
+                      <option key={c.id} value={c.name} />
+                    ))}
+                  </datalist>
+
+                  <input
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    placeholder="Số điện thoại"
+                    className="px-3.5 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
+                  />
                 </div>
-                <div className="space-y-2.5">
-                  {db.products.map((prod) => {
-                    const cost = getProductCost(prod.id);
-                    const margin = prod.sellingPrice - cost;
-                    return (
-                      <div
-                        key={prod.id}
-                        className="p-3 rounded-2xl bg-white/65 border border-white space-y-1"
-                      >
-                        <div className="flex items-center justify-between gap-2 text-xs sm:text-sm font-semibold text-slate-900">
-                          <span>{prod.name}</span>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <span>{formatVnd(prod.sellingPrice)}</span>
-                            <button
-                              onClick={() => openEditProduct(prod)}
-                              className="p-1 rounded-lg hover:bg-slate-100 text-slate-500"
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between text-[11px] text-slate-600">
-                          <span>Giá vốn: {formatVnd(cost)}</span>
-                          <span className="text-emerald-700 font-medium">
-                            Lãi gộp: {formatVnd(margin)}
-                          </span>
-                        </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      value={quantity}
+                      onChange={(e) => setQuantity(Number(e.target.value))}
+                      placeholder="Số lượng"
+                      className="px-3 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      step={10000}
+                      value={deposit}
+                      onChange={(e) => setDeposit(Number(e.target.value))}
+                      placeholder="Tiền cọc"
+                      className="px-3 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
+                    />
+                  </div>
+
+                  <input
+                    type="date"
+                    value={deliveryDate}
+                    onChange={(e) => setDeliveryDate(e.target.value)}
+                    className="px-3.5 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
+                  />
+
+                  <input
+                    type="time"
+                    value={deliveryTime}
+                    onChange={(e) => setDeliveryTime(e.target.value)}
+                    className="px-3.5 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
+                  />
+                </div>
+
+                <input
+                  value={orderNote}
+                  onChange={(e) => setOrderNote(e.target.value)}
+                  placeholder="Ghi chú (ít ngọt, viết chữ lên bánh, địa chỉ giao...)"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
+                />
+
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs sm:text-sm font-semibold shadow-sm"
+                >
+                  Lưu đơn bánh
+                </button>
+              </form>
+            </div>
+
+            {/* Khối Thêm hàng loạt đơn bánh (nhập text nhiều dòng + xem trước) */}
+            <div className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-3">
+              <div className="space-y-0.5">
+                <h2 className="font-bold text-slate-900 text-sm sm:text-base flex items-center gap-1.5">
+                  <FileText className="w-4 h-4 text-sky-600" />
+                  <span>Thêm hàng loạt đơn bánh</span>
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Mỗi dòng theo thứ tự:{' '}
+                  <strong>
+                    Loại bánh - Tên khách - Ngày (dd/mm/yyyy) - Giờ giao - Tổng tiền - Đặt cọc - Ghi chú
+                  </strong>
+                </p>
+              </div>
+
+              <textarea
+                rows={4}
+                value={bulkText}
+                onChange={(e) => setBulkText(e.target.value)}
+                placeholder={
+                  'Nhập danh sách đơn bánh (mỗi dòng một đơn)...\nVí dụ: Bánh Kem Dâu 18cm - Nguyễn Hậu - 25/11/2026 - 16:00 - 380,000 - 150,000 - Ít ngọt'
+                }
+                className="w-full px-3.5 py-2.5 rounded-2xl bg-white/90 border border-slate-200 text-xs sm:text-sm font-mono focus:outline-none"
+              />
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs text-slate-600">
+                  Nhận diện sẵn sàng thêm: <strong>{parsedBulkOrders.length}</strong> đơn bánh
+                </span>
+                <button
+                  type="button"
+                  disabled={parsedBulkOrders.length === 0}
+                  onClick={handleImportBulkOrders}
+                  className="px-4 py-2 rounded-xl bg-sky-600 disabled:bg-slate-300 text-white text-xs sm:text-sm font-semibold"
+                >
+                  Thêm {parsedBulkOrders.length} đơn vào hệ thống
+                </button>
+              </div>
+
+              <div className="p-3 rounded-2xl bg-white/70 border border-white space-y-1.5">
+                <div className="text-xs font-semibold text-slate-800">
+                  Xem trước đơn sẽ được tạo ({parsedBulkOrders.length})
+                </div>
+                {parsedBulkOrders.length === 0 ? (
+                  <div className="text-xs text-slate-400">
+                    Chưa có dòng hợp lệ nào để xem trước.
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {parsedBulkOrders.map((item) => (
+                      <div key={item.index} className="text-xs text-slate-700">
+                        • <strong>{item.dishName}</strong> — {item.cusName} ({item.dateIso}{' '}
+                        {item.timeVal}) — {formatVnd(item.totalVal)} (Cọc:{' '}
+                        {formatVnd(item.depositVal)})
                       </div>
-                    );
-                  })}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
         )}
 
-        {/* TAB 2: ĐƠN HÀNG + LỊCH ÂM/DƯƠNG + SẢN XUẤT */}
+        {/* TAB 2: LỊCH ÂM/DƯƠNG (DANH SÁCH / TUẦN / THÁNG) & ĐƠN HÀNG (GIỐNG ẢNH 2) */}
         {activeTab === 'orders' && (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-1 bg-white/70 p-1 rounded-2xl border border-white">
+              <div className="relative flex-1 min-w-[220px]">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Tìm theo loại bánh, khách hàng, SĐT..."
+                  className="w-full pl-10 pr-3.5 py-2.5 rounded-2xl bg-white/85 border border-white text-xs sm:text-sm focus:outline-none"
+                />
+              </div>
+
+              <div className="flex items-center gap-1 bg-white/80 p-1 rounded-2xl border border-white">
                 <button
-                  onClick={() => setOrderSubView('schedule')}
+                  onClick={() => {
+                    setOrderSubView('schedule');
+                    setCalendarMode('list');
+                  }}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1 ${
-                    orderSubView === 'schedule' ? 'bg-slate-900 text-white' : 'text-slate-600'
+                    orderSubView === 'schedule' && calendarMode === 'list'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  <List className="w-3.5 h-3.5" />
+                  <span>Danh sách</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setOrderSubView('schedule');
+                    setCalendarMode('week');
+                  }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1 ${
+                    orderSubView === 'schedule' && calendarMode === 'week'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  <CalendarDays className="w-3.5 h-3.5" />
+                  <span>Tuần</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setOrderSubView('schedule');
+                    setCalendarMode('month');
+                  }}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-medium flex items-center gap-1 ${
+                    orderSubView === 'schedule' && calendarMode === 'month'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600'
                   }`}
                 >
                   <CalendarIcon className="w-3.5 h-3.5" />
-                  <span>Lịch Âm/Dương</span>
-                </button>
-                <button
-                  onClick={() => setOrderSubView('orders')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-medium ${
-                    orderSubView === 'orders' ? 'bg-slate-900 text-white' : 'text-slate-600'
-                  }`}
-                >
-                  Tất cả đơn ({db.orders.length})
-                </button>
-                <button
-                  onClick={() => setOrderSubView('production')}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-medium ${
-                    orderSubView === 'production' ? 'bg-slate-900 text-white' : 'text-slate-600'
-                  }`}
-                >
-                  Tiến độ bếp
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2 flex-1 min-w-[210px] max-w-sm">
-                <div className="relative flex-1">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Tìm mã đơn, khách, SĐT..."
-                    className="w-full pl-9 pr-3 py-2 rounded-2xl bg-white/80 border border-white text-xs sm:text-sm focus:outline-none"
-                  />
-                </div>
-                <button
-                  onClick={() => openQuickAdd('order', selectedDate)}
-                  className="gold-badge px-3.5 py-2 rounded-2xl text-xs font-semibold flex items-center gap-1 shrink-0"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Thêm đơn</span>
+                  <span>Tháng</span>
                 </button>
               </div>
             </div>
 
-            {/* CHẾ ĐỘ XEM LỊCH ÂM / DƯƠNG SONG SONG */}
             {orderSubView === 'schedule' && (
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                <div className="lg:col-span-7 liquid-glass rounded-3xl p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <button
-                      onClick={() =>
-                        setCalendarCursor((prev) =>
-                          prev.month === 0
-                            ? { year: prev.year - 1, month: 11 }
-                            : { year: prev.year, month: prev.month - 1 }
-                        )
-                      }
-                      className="p-2 rounded-xl bg-white/80 hover:bg-white text-slate-700"
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-
-                    <div className="text-center">
-                      <div className="font-bold text-sm sm:text-base text-slate-900">
-                        Tháng {calendarCursor.month + 1} / {calendarCursor.year}
-                      </div>
+              <div className="space-y-4">
+                <div className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className="font-bold text-slate-900 text-sm sm:text-base">
+                      Tháng {calendarCursor.month + 1} / {calendarCursor.year}
+                    </h2>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() =>
+                          setCalendarCursor((prev) =>
+                            prev.month === 0
+                              ? { year: prev.year - 1, month: 11 }
+                              : { year: prev.year, month: prev.month - 1 }
+                          )
+                        }
+                        className="p-2 rounded-xl bg-white/85 hover:bg-white border border-slate-200 text-slate-700"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
                       <button
                         onClick={() => {
                           const now = new Date();
                           setCalendarCursor({ year: now.getFullYear(), month: now.getMonth() });
                           setSelectedDate(todayIso);
                         }}
-                        className="text-[11px] text-amber-700 font-medium hover:underline"
+                        className="px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-semibold"
                       >
-                        Về hôm nay
+                        Hôm nay
+                      </button>
+                      <button
+                        onClick={() =>
+                          setCalendarCursor((prev) =>
+                            prev.month === 11
+                              ? { year: prev.year + 1, month: 0 }
+                              : { year: prev.year, month: prev.month + 1 }
+                          )
+                        }
+                        className="p-2 rounded-xl bg-white/85 hover:bg-white border border-slate-200 text-slate-700"
+                      >
+                        <ChevronRight className="w-4 h-4" />
                       </button>
                     </div>
-
-                    <button
-                      onClick={() =>
-                        setCalendarCursor((prev) =>
-                          prev.month === 11
-                            ? { year: prev.year + 1, month: 0 }
-                            : { year: prev.year, month: prev.month + 1 }
-                        )
-                      }
-                      className="p-2 rounded-xl bg-white/80 hover:bg-white text-slate-700"
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
                   </div>
 
-                  <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-slate-500">
-                    {WEEKDAYS_VI.map((w) => (
-                      <div key={w} className="py-1">
-                        {w}
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="grid grid-cols-7 gap-1.5">
-                    {calendarDays.map((cell, idx) => {
-                      if (!cell.inMonth) {
-                        return <div key={`empty-${idx}`} className="h-14 sm:h-16" />;
-                      }
-                      const isSelected = cell.iso === selectedDate;
-                      const isToday = cell.iso === todayIso;
-                      return (
-                        <button
-                          key={cell.iso}
-                          onClick={() => setSelectedDate(cell.iso)}
-                          className={`h-14 sm:h-16 rounded-2xl p-1.5 flex flex-col justify-between border text-left transition ${
-                            isSelected
-                              ? 'bg-slate-900 text-white border-slate-900 shadow-sm'
-                              : isToday
-                              ? 'bg-amber-100/90 border-amber-400 text-slate-900'
-                              : 'bg-white/75 hover:bg-white border-white text-slate-800'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between w-full">
-                            <span className="text-xs sm:text-sm font-bold leading-none">
-                              {cell.day}
-                            </span>
-                            {cell.orderCount > 0 && (
-                              <span
-                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none ${
-                                  isSelected
-                                    ? 'bg-amber-400 text-slate-950'
-                                    : 'bg-amber-500 text-white'
-                                }`}
-                              >
-                                {cell.orderCount}
-                              </span>
-                            )}
+                  {calendarMode !== 'list' && (
+                    <>
+                      <div className="grid grid-cols-7 gap-1 text-center text-[11px] font-semibold text-slate-500">
+                        {WEEKDAYS_VI.map((w) => (
+                          <div key={w} className="py-1">
+                            {w}
                           </div>
-                          <span
-                            className={`text-[10px] leading-none ${
-                              isSelected
-                                ? 'text-amber-300'
-                                : cell.isSpecialLunar
-                                ? 'text-rose-600 font-bold'
-                                : 'text-slate-500'
-                            }`}
-                          >
-                            {cell.lunarText}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-7 gap-1.5">
+                        {calendarDays.map((cell, idx) => {
+                          if (!cell.inMonth) {
+                            return <div key={`empty-${idx}`} className="h-14 sm:h-16" />;
+                          }
+                          const isSelected = cell.iso === selectedDate;
+                          const isToday = cell.iso === todayIso;
+                          return (
+                            <button
+                              key={cell.iso}
+                              onClick={() => setSelectedDate(cell.iso)}
+                              className={`h-14 sm:h-16 rounded-2xl p-2 flex flex-col justify-between border text-left transition ${
+                                isSelected
+                                  ? 'bg-white border-sky-500 ring-2 ring-sky-500/30 shadow-sm'
+                                  : isToday
+                                  ? 'bg-amber-50/90 border-amber-300'
+                                  : 'bg-white/75 hover:bg-white border-white'
+                              }`}
+                            >
+                              <div className="flex items-baseline justify-between gap-1 w-full">
+                                <div className="flex items-baseline gap-1 min-w-0">
+                                  <span className="text-xs sm:text-sm font-bold text-slate-900">
+                                    {cell.day}
+                                  </span>
+                                  <span
+                                    className={`text-[10px] truncate ${
+                                      cell.isSpecialLunar
+                                        ? 'text-rose-600 font-bold'
+                                        : 'text-slate-400'
+                                    }`}
+                                  >
+                                    {cell.lunarText}
+                                  </span>
+                                </div>
+                                {cell.orderCount > 0 && (
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-sky-600 text-white leading-none shrink-0">
+                                    {cell.orderCount}
+                                  </span>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                {/* Danh sách đơn của ngày đang chọn */}
-                <div className="lg:col-span-5 liquid-glass rounded-3xl p-4 space-y-3">
+                {/* Đơn của ngày đang chọn */}
+                <div className="liquid-glass rounded-3xl p-4 space-y-3">
                   <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <div className="font-bold text-sm sm:text-base text-slate-900">
-                        Ngày {selectedDateInfo.solarLabel}
-                      </div>
-                      <div className="text-xs font-medium text-amber-800">
-                        Âm lịch: {selectedDateInfo.lunar.fullText}
-                        {selectedDateInfo.lunar.isSpecialDay ? ' • Ngày Rằm / Mùng 1' : ''}
-                      </div>
+                    <div className="font-bold text-xs sm:text-sm text-slate-900">
+                      Đơn giao ngày {selectedDate} ({selectedDateInfo.lunar.fullText}) (
+                      {ordersOnSelectedDate.length})
                     </div>
                     <button
                       onClick={() => openQuickAdd('order', selectedDate)}
-                      className="px-3 py-1.5 rounded-xl gold-badge text-xs font-semibold flex items-center gap-1"
+                      className="text-xs font-semibold text-sky-700 hover:underline"
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Đặt bánh ngày này</span>
+                      + Tạo đơn vào ngày này
                     </button>
                   </div>
 
                   {ordersOnSelectedDate.length === 0 ? (
-                    <div className="p-6 rounded-2xl bg-white/60 border border-white text-center text-xs text-slate-500">
-                      Chưa có đơn giao trong ngày {selectedDateInfo.solarLabel}.
+                    <div className="p-4 rounded-2xl bg-white/65 border border-white text-center text-xs text-slate-500">
+                      Không có đơn giao nào trong ngày {selectedDate}.
                     </div>
                   ) : (
-                    <div className="space-y-2.5">
+                    <div className="space-y-2">
                       {ordersOnSelectedDate.map((ord) => (
                         <div
                           key={ord.id}
-                          className="p-3.5 rounded-2xl bg-white/80 border border-white space-y-2"
+                          className="p-3 rounded-2xl bg-white/85 border border-white flex flex-col sm:flex-row sm:items-center justify-between gap-2"
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-bold px-2 py-0.5 rounded-lg bg-amber-100 text-amber-900">
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-bold text-sky-800 bg-sky-100 px-2 py-0.5 rounded-lg">
                                 {ord.deliveryTime}
                               </span>
                               <span className="font-semibold text-sm text-slate-900">
                                 {ord.customerName}
                               </span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => openEditOrder(ord)}
-                                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600"
+                              <span
+                                className={`text-[11px] px-2 py-0.5 rounded-full border ${STATUS_BADGE[ord.status]}`}
                               >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteOrder(ord)}
-                                className="p-1.5 rounded-lg hover:bg-rose-50 text-rose-600"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="text-xs text-slate-700">
-                            {ord.items.map((it) => `${it.productName} × ${it.quantity}`).join(', ')}
-                            {ord.items[0]?.note ? ` — "${ord.items[0].note}"` : ''}
-                          </div>
-
-                          <div className="flex items-center justify-between pt-1">
-                            <span className="text-xs font-bold text-slate-900">
-                              {formatVnd(ord.totalAmount)}{' '}
-                              <span className="font-normal text-slate-500">
-                                (Còn: {formatVnd(ord.remainingAmount)})
+                                {STATUS_LABEL[ord.status]}
                               </span>
+                            </div>
+                            <div className="text-xs text-slate-600 mt-1">
+                              {ord.items.map((i) => `${i.productName} x${i.quantity}`).join(', ')}
+                              {ord.items[0]?.note ? ` • ${ord.items[0].note}` : ''}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-xs font-bold text-slate-900 mr-1">
+                              {formatVnd(ord.totalAmount)}
                             </span>
                             <select
                               value={ord.status}
                               onChange={(e) =>
                                 handleOrderStatusChange(ord.id, e.target.value as OrderStatus)
                               }
-                              className="px-2.5 py-1 rounded-xl bg-slate-100 text-xs font-medium"
+                              className="px-2 py-1 rounded-xl bg-slate-100 text-xs font-medium"
                             >
                               <option value="pending">Chờ làm</option>
                               <option value="baking">Đang làm</option>
@@ -1310,104 +1692,75 @@ export function App() {
                               <option value="delivered">Đã giao</option>
                               <option value="cancelled">Đã hủy</option>
                             </select>
+                            <button
+                              onClick={() => openEditOrder(ord)}
+                              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-700"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteOrder(ord)}
+                              className="p-1.5 rounded-lg hover:bg-rose-50 text-rose-600"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
-              </div>
-            )}
 
-            {/* DANH SÁCH ĐƠN HÀNG & BẢNG TIẾN ĐỘ BẾP */}
-            {(orderSubView === 'orders' || orderSubView === 'production') && (
-              <div className="space-y-3">
-                {sortedOrders
-                  .filter((o) =>
-                    orderSubView === 'production'
-                      ? o.status !== 'delivered' && o.status !== 'cancelled'
-                      : true
-                  )
-                  .map((ord) => {
-                    const dl = formatSolarWithLunar(ord.deliveryDate);
-                    return (
-                      <div
-                        key={ord.id}
-                        className="liquid-glass rounded-3xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-3"
-                      >
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-xs font-bold px-2.5 py-1 rounded-xl bg-amber-100 text-amber-900">
-                              {ord.orderCode}
-                            </span>
-                            <span className="font-semibold text-sm text-slate-900">
-                              {ord.customerName}
-                            </span>
-                            {ord.customerPhone && (
-                              <span className="text-xs text-slate-500 flex items-center gap-1">
-                                <Phone className="w-3 h-3" />
-                                {ord.customerPhone}
+                {/* Đơn hôm nay và sắp tới */}
+                <div className="liquid-glass rounded-3xl p-4 space-y-2.5">
+                  <div className="flex items-center justify-between text-xs text-slate-600">
+                    <span className="font-bold text-slate-900">
+                      Đơn hôm nay và sắp tới ({upcomingOrders.length})
+                    </span>
+                    <span>Tên • Ngày • Giờ • Ghi chú</span>
+                  </div>
+                  {upcomingOrders.length === 0 ? (
+                    <div className="p-4 rounded-2xl bg-white/65 border border-white text-center text-xs text-slate-500">
+                      Không có đơn bánh nào từ hôm nay trở đi.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {upcomingOrders.map((ord) => {
+                        const dl = formatSolarWithLunar(ord.deliveryDate);
+                        return (
+                          <div
+                            key={ord.id}
+                            className="p-3 rounded-2xl bg-white/80 border border-white flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                          >
+                            <div className="text-xs sm:text-sm text-slate-800">
+                              <strong>{ord.customerName}</strong> • {dl.solarLabel} (
+                              {dl.lunar.shortText} ÂL) • {ord.deliveryTime} •{' '}
+                              {ord.items.map((i) => `${i.productName} x${i.quantity}`).join(', ')}
+                              {ord.items[0]?.note ? ` • ${ord.items[0].note}` : ''}
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-xs font-bold text-slate-900 mr-1">
+                                {formatVnd(ord.totalAmount)}
                               </span>
-                            )}
-                            <span
-                              className={`text-xs px-2.5 py-0.5 rounded-full border ${STATUS_BADGE[ord.status]}`}
-                            >
-                              {STATUS_LABEL[ord.status]}
-                            </span>
-                          </div>
-                          <div className="text-xs sm:text-sm text-slate-700">
-                            {ord.items.map((it) => `${it.productName} × ${it.quantity}`).join(', ')}
-                          </div>
-                          <div className="text-xs text-slate-500 flex flex-wrap gap-3">
-                            <span>
-                              Giao: <strong>{dl.solarLabel}</strong> ({dl.lunar.shortText} ÂL) lúc{' '}
-                              <strong>{ord.deliveryTime}</strong>
-                            </span>
-                            <span>Cọc: {formatVnd(ord.depositAmount)}</span>
-                            <span>
-                              Còn lại: <strong>{formatVnd(ord.remainingAmount)}</strong>
-                            </span>
-                            {ord.items[0]?.note && <span>Ghi chú: {ord.items[0].note}</span>}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between md:justify-end gap-2 shrink-0">
-                          <div className="text-right mr-1">
-                            <div className="text-sm font-bold text-slate-900">
-                              {formatVnd(ord.totalAmount)}
+                              <button
+                                onClick={() => openEditOrder(ord)}
+                                className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteOrder(ord)}
+                                className="p-1.5 rounded-lg bg-white hover:bg-rose-50 text-rose-600"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
                             </div>
                           </div>
-                          <select
-                            value={ord.status}
-                            onChange={(e) =>
-                              handleOrderStatusChange(ord.id, e.target.value as OrderStatus)
-                            }
-                            className="px-3 py-2 rounded-xl bg-white/90 border border-slate-200 text-xs font-medium"
-                          >
-                            <option value="pending">Chờ làm</option>
-                            <option value="baking">Đang làm</option>
-                            <option value="ready">Sẵn sàng giao</option>
-                            <option value="delivered">Đã giao</option>
-                            <option value="cancelled">Đã hủy</option>
-                          </select>
-                          <button
-                            onClick={() => openEditOrder(ord)}
-                            title="Sửa đơn"
-                            className="p-2 rounded-xl bg-white/90 hover:bg-white border border-slate-200 text-slate-700"
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteOrder(ord)}
-                            title="Xóa đơn"
-                            className="p-2 rounded-xl bg-white/90 hover:bg-rose-50 border border-slate-200 text-rose-600"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1443,14 +1796,12 @@ export function App() {
                           </span>
                           <button
                             onClick={() => openEditProduct(prod)}
-                            title="Sửa"
                             className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700"
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleDeleteProduct(prod)}
-                            title="Xóa"
                             className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -1461,18 +1812,6 @@ export function App() {
                         Nhóm: {prod.category} • Thời gian: ~{prod.prepTimeMinutes} phút • Giá vốn tự
                         động: <strong>{formatVnd(cost)}</strong>
                       </div>
-                      {prod.recipe.length > 0 && (
-                        <div className="text-xs text-slate-500">
-                          Định lượng:{' '}
-                          {prod.recipe
-                            .map((r) => {
-                              const ing = ingredientMap.get(r.ingredientId);
-                              return ing ? `${ing.name} (${r.quantity}${ing.unit})` : null;
-                            })
-                            .filter(Boolean)
-                            .join(', ')}
-                        </div>
-                      )}
                     </div>
                   );
                 })}
@@ -1553,7 +1892,6 @@ export function App() {
                         <div className="text-xs text-slate-500">
                           Giá vốn: {formatVnd(ing.costPerUnit)}/{ing.unit} • Báo hết:{' '}
                           {ing.minStockAlert} {ing.unit}
-                          {ing.expiryDate ? ` • HSD: ${ing.expiryDate}` : ''}
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -1581,11 +1919,11 @@ export function App() {
           </div>
         )}
 
-        {/* TAB 4: TÀI CHÍNH, KHÁCH HÀNG, NHÀ CUNG CẤP & NHÂN VIÊN */}
+        {/* TAB 4: TÀI CHÍNH & KHÁCH HÀNG (GIỐNG ẢNH 3 & ẢNH 4) */}
         {activeTab === 'finance' && (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex flex-wrap items-center gap-1 bg-white/70 p-1 rounded-2xl border border-white w-fit">
+              <div className="flex flex-wrap items-center gap-1 bg-white/75 p-1 rounded-2xl border border-white">
                 <button
                   onClick={() => setPartnerSubView('finance')}
                   className={`px-3 py-1.5 rounded-xl text-xs font-medium ${
@@ -1623,7 +1961,7 @@ export function App() {
               {partnerSubView === 'customers' && (
                 <button
                   onClick={() => openQuickAdd('customer')}
-                  className="gold-badge px-3.5 py-2 rounded-2xl text-xs font-semibold flex items-center gap-1"
+                  className="px-3.5 py-2 rounded-xl bg-sky-600 text-white text-xs font-semibold flex items-center gap-1"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Thêm khách hàng</span>
@@ -1632,122 +1970,277 @@ export function App() {
             </div>
 
             {partnerSubView === 'finance' && (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="space-y-4">
+                {/* Khung Thêm khoản thu */}
                 <form
-                  onSubmit={handleAddTransaction}
-                  className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-3 h-fit"
+                  onSubmit={(e) => {
+                    setTxType('income');
+                    handleAddTransaction(e);
+                  }}
+                  className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-3"
                 >
-                  <h2 className="font-semibold text-slate-900 text-sm">Ghi sổ Thu / Chi</h2>
-                  <select
-                    value={txType}
-                    onChange={(e) => setTxType(e.target.value as 'income' | 'expense')}
-                    className="w-full px-3 py-2.5 rounded-xl bg-white/85 border border-white text-sm"
-                  >
-                    <option value="income">Khoản Thu (+)</option>
-                    <option value="expense">Khoản Chi (-)</option>
-                  </select>
-                  <input
-                    value={txCategory}
-                    onChange={(e) => setTxCategory(e.target.value)}
-                    placeholder="Hạng mục (Bán lẻ, Nhập bột, Điện nước...)"
-                    className="w-full px-3 py-2.5 rounded-xl bg-white/85 border border-white text-sm"
-                  />
-                  <input
-                    type="number"
-                    min={0}
-                    step={1000}
-                    value={txAmount}
-                    onChange={(e) => setTxAmount(Number(e.target.value))}
-                    placeholder="Số tiền (VNĐ)"
-                    className="w-full px-3 py-2.5 rounded-xl bg-white/85 border border-white text-sm"
-                  />
-                  <input
-                    value={txNote}
-                    onChange={(e) => setTxNote(e.target.value)}
-                    placeholder="Ghi chú"
-                    className="w-full px-3 py-2.5 rounded-xl bg-white/85 border border-white text-sm"
-                  />
+                  <h2 className="font-bold text-slate-900 text-sm">
+                    + Thêm khoản thu (Bán lẻ tại tiệm, cọc bánh, thu khác...)
+                  </h2>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <input
+                      value={txType === 'income' ? txCategory : ''}
+                      onChange={(e) => {
+                        setTxType('income');
+                        setTxCategory(e.target.value);
+                      }}
+                      placeholder="Tên khoản thu * (VD: Bán bánh kem tại tiệm)"
+                      className="px-3.5 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      step={1000}
+                      value={txType === 'income' ? txAmount : 0}
+                      onChange={(e) => {
+                        setTxType('income');
+                        setTxAmount(Number(e.target.value));
+                      }}
+                      placeholder="Số tiền thu (VNĐ) *"
+                      className="px-3.5 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
+                    />
+                    <input
+                      value={txType === 'income' ? txNote : ''}
+                      onChange={(e) => {
+                        setTxType('income');
+                        setTxNote(e.target.value);
+                      }}
+                      placeholder="Ghi chú khoản thu"
+                      className="px-3.5 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
+                    />
+                  </div>
                   <button
                     type="submit"
-                    className="w-full gold-badge rounded-xl py-2.5 text-sm font-semibold"
+                    onClick={() => setTxType('income')}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold"
                   >
-                    Lưu phiếu
+                    Lưu khoản thu
                   </button>
                 </form>
 
-                <div className="lg:col-span-2 liquid-glass rounded-3xl p-4 sm:p-5 space-y-2.5">
-                  <h2 className="font-semibold text-slate-900 text-sm">Sổ giao dịch</h2>
-                  {db.transactions.map((tx) => (
-                    <div
-                      key={tx.id}
-                      className="p-3 rounded-2xl bg-white/75 border border-white flex items-center justify-between gap-2"
-                    >
-                      <div>
-                        <div className="text-sm font-semibold text-slate-900">
-                          {tx.category}{' '}
-                          {tx.referenceCode && (
-                            <span className="text-xs font-normal text-slate-500">
-                              ({tx.referenceCode})
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {tx.date} {tx.note ? `• ${tx.note}` : ''}
-                        </div>
-                      </div>
-                      <div
-                        className={`text-sm font-bold shrink-0 ${
-                          tx.type === 'income' ? 'text-emerald-700' : 'text-rose-600'
+                {/* Khung Thêm khoản chi */}
+                <form
+                  onSubmit={(e) => {
+                    setTxType('expense');
+                    handleAddTransaction(e);
+                  }}
+                  className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-3"
+                >
+                  <h2 className="font-bold text-slate-900 text-sm">
+                    + Thêm khoản chi nguyên liệu, công làm hoặc chi phí khác
+                  </h2>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                    <input
+                      value={txType === 'expense' ? txCategory : ''}
+                      onChange={(e) => {
+                        setTxType('expense');
+                        setTxCategory(e.target.value);
+                      }}
+                      placeholder="Tên khoản chi * (VD: Bơ lạt, Hộp bánh, Gas/Điện)"
+                      className="px-3.5 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      step={1000}
+                      value={txType === 'expense' ? txAmount : 0}
+                      onChange={(e) => {
+                        setTxType('expense');
+                        setTxAmount(Number(e.target.value));
+                      }}
+                      placeholder="Số tiền chi (VNĐ) *"
+                      className="px-3.5 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
+                    />
+                    <input
+                      value={txType === 'expense' ? txNote : ''}
+                      onChange={(e) => {
+                        setTxType('expense');
+                        setTxNote(e.target.value);
+                      }}
+                      placeholder="Ghi chú khoản chi"
+                      className="px-3.5 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    onClick={() => setTxType('expense')}
+                    className="px-4 py-2 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-xs sm:text-sm font-semibold"
+                  >
+                    Lưu khoản chi
+                  </button>
+                </form>
+
+                {/* Danh sách Thu / Chi có bộ lọc & sửa/xóa */}
+                <div className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="font-bold text-slate-900 text-sm">
+                      Danh sách khoản thu & chi ({filteredTransactions.length})
+                    </h2>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setTxFilter('all')}
+                        className={`px-2.5 py-1 rounded-full text-xs font-medium ${
+                          txFilter === 'all' ? 'bg-slate-900 text-white' : 'bg-white/80 text-slate-600'
                         }`}
                       >
-                        {tx.type === 'income' ? '+' : '-'}
-                        {formatVnd(tx.amount)}
-                      </div>
+                        Tất cả
+                      </button>
+                      <button
+                        onClick={() => setTxFilter('income')}
+                        className={`px-2.5 py-1 rounded-full text-xs font-medium ${
+                          txFilter === 'income'
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-white/80 text-slate-600'
+                        }`}
+                      >
+                        Thu
+                      </button>
+                      <button
+                        onClick={() => setTxFilter('expense')}
+                        className={`px-2.5 py-1 rounded-full text-xs font-medium ${
+                          txFilter === 'expense'
+                            ? 'bg-rose-600 text-white'
+                            : 'bg-white/80 text-slate-600'
+                        }`}
+                      >
+                        Chi
+                      </button>
                     </div>
-                  ))}
+                  </div>
+
+                  {filteredTransactions.length === 0 ? (
+                    <div className="p-4 rounded-2xl bg-white/65 border border-white text-center text-xs text-slate-500">
+                      Chưa có khoản thu hoặc chi nào phù hợp.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {filteredTransactions.map((tx) => (
+                        <div
+                          key={tx.id}
+                          className="p-3 rounded-2xl bg-white/80 border border-white flex items-center justify-between gap-2"
+                        >
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">
+                              {tx.category}{' '}
+                              {tx.referenceCode && (
+                                <span className="text-xs font-normal text-slate-500">
+                                  ({tx.referenceCode})
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-slate-500">
+                              {tx.date} {tx.note ? `• ${tx.note}` : ''}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div
+                              className={`text-sm font-bold ${
+                                tx.type === 'income' ? 'text-emerald-700' : 'text-rose-600'
+                              }`}
+                            >
+                              {tx.type === 'income' ? '+' : '-'}
+                              {formatVnd(tx.amount)}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingTxId(tx.id);
+                                setTxType(tx.type);
+                                setTxCategory(tx.category);
+                                setTxAmount(tx.amount);
+                                setTxNote(tx.note || '');
+                                setQuickAddMode('transaction');
+                                setQuickAddOpen(true);
+                              }}
+                              className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-700"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteTransaction(tx.id)}
+                              className="p-1.5 rounded-lg bg-white hover:bg-rose-50 text-rose-600"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
             {partnerSubView === 'customers' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {db.customers.map((c) => (
-                  <div
-                    key={c.id}
-                    className="liquid-glass rounded-3xl p-4 flex items-start justify-between gap-2"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-sm text-slate-900">{c.name}</span>
-                        <span className="text-xs font-bold text-amber-800">
-                          {formatVnd(c.totalSpent)}
-                        </span>
-                      </div>
-                      <div className="text-xs text-slate-600">
-                        SĐT: {c.phone || 'Chưa cập nhật'} • {c.orderCount} đơn
-                      </div>
-                      {c.preferences && (
-                        <div className="text-xs text-slate-500">Sở thích: {c.preferences}</div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        onClick={() => openEditCustomer(c)}
-                        title="Sửa khách hàng"
-                        className="p-2 rounded-xl bg-white/80 hover:bg-white text-slate-700"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteCustomer(c)}
-                        title="Xóa khách hàng"
-                        className="p-2 rounded-xl bg-white/80 hover:bg-rose-50 text-rose-600"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+              <div className="space-y-3">
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Tìm khách hàng theo tên hoặc SĐT..."
+                    className="w-full pl-10 pr-3.5 py-2.5 rounded-2xl bg-white/85 border border-white text-xs sm:text-sm focus:outline-none"
+                  />
+                </div>
+
+                {db.customers.length === 0 ? (
+                  <div className="liquid-glass rounded-3xl p-6 text-center text-xs sm:text-sm text-slate-500">
+                    Chưa có dữ liệu khách hàng nào.
                   </div>
-                ))}
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {db.customers
+                      .filter((c) => {
+                        const q = searchQuery.trim().toLowerCase();
+                        if (!q) return true;
+                        return (
+                          c.name.toLowerCase().includes(q) ||
+                          (c.phone || '').toLowerCase().includes(q)
+                        );
+                      })
+                      .map((c) => (
+                        <div
+                          key={c.id}
+                          className="liquid-glass rounded-3xl p-4 flex items-start justify-between gap-2"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-sm text-slate-900">{c.name}</span>
+                              <span className="text-xs font-bold text-amber-800">
+                                {formatVnd(c.totalSpent)}
+                              </span>
+                            </div>
+                            <div className="text-xs text-slate-600">
+                              SĐT: {c.phone || 'Chưa cập nhật'} • {c.orderCount} đơn
+                            </div>
+                            {c.preferences && (
+                              <div className="text-xs text-slate-500">Ghi chú: {c.preferences}</div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => openEditCustomer(c)}
+                              className="p-2 rounded-xl bg-white/85 hover:bg-white text-slate-700"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteCustomer(c)}
+                              className="p-2 rounded-xl bg-white/85 hover:bg-rose-50 text-rose-600"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1765,7 +2258,6 @@ export function App() {
                       </span>
                     </div>
                     <div className="text-xs text-slate-600">SĐT: {s.phone}</div>
-                    {s.note && <div className="text-xs text-slate-500">{s.note}</div>}
                   </div>
                 ))}
               </div>
@@ -1787,9 +2279,6 @@ export function App() {
                     <div className="text-xs text-slate-600">
                       Ca: {st.shift} • SĐT: {st.phone}
                     </div>
-                    {st.activeTask && (
-                      <div className="text-xs text-slate-500">Công việc: {st.activeTask}</div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -1797,28 +2286,19 @@ export function App() {
           </div>
         )}
 
-        {/* TAB 5: CÀI ĐẶT */}
+        {/* TAB 5: CÀI ĐẶT (GIỐNG ẢNH 5) */}
         {activeTab === 'settings' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-4">
-              <h2 className="font-semibold text-slate-900">Tiệm & Đồng bộ dữ liệu</h2>
+          <div className="space-y-4">
+            <div className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-3">
+              <h2 className="font-bold text-slate-900 text-sm sm:text-base">
+                Cài đặt lưu trữ Google Drive & Dữ liệu
+              </h2>
+              <p className="text-xs text-slate-500">
+                Dữ liệu lưu tự động cục bộ và đồng bộ khi có mạng. Bạn có thể tải/nhập JSON,
+                xuất/nhập CSV hoặc xóa toàn bộ dữ liệu về 0.
+              </p>
 
-              <div className="space-y-2.5">
-                <label className="block text-xs text-slate-500">Tên tiệm</label>
-                <input
-                  value={db.config.shopName}
-                  onChange={(e) =>
-                    setDb((prev) => ({
-                      ...prev,
-                      config: { ...prev.config, shopName: e.target.value },
-                    }))
-                  }
-                  className="w-full px-3.5 py-2 rounded-xl bg-white/85 border border-white text-sm"
-                />
-
-                <label className="block text-xs text-slate-500">
-                  Google Drive Apps Script Web App URL (tùy chọn)
-                </label>
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   value={db.config.googleDriveWebAppUrl}
                   onChange={(e) =>
@@ -1827,72 +2307,104 @@ export function App() {
                       config: { ...prev.config, googleDriveWebAppUrl: e.target.value },
                     }))
                   }
-                  placeholder="https://script.google.com/macros/s/.../exec"
-                  className="w-full px-3.5 py-2 rounded-xl bg-white/85 border border-white text-sm"
+                  placeholder="Google Drive / Apps Script URL hoặc Client ID"
+                  className="flex-1 px-3.5 py-2 rounded-xl bg-white/90 border border-slate-200 text-sm"
                 />
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 pt-1">
                 <button
                   onClick={handleManualSync}
-                  className="px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-medium flex items-center gap-1.5"
+                  className="px-4 py-2 rounded-xl bg-sky-600 text-white text-xs font-semibold flex items-center justify-center gap-1.5"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>Đồng bộ ngay</span>
                 </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  onClick={handleExportJson}
+                  className="px-3.5 py-2 rounded-xl bg-white/90 border border-slate-200 text-slate-800 text-xs font-semibold flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Tải file JSON</span>
+                </button>
+
+                <button
+                  onClick={() => jsonInputRef.current?.click()}
+                  className="px-3.5 py-2 rounded-xl bg-white/90 border border-slate-200 text-slate-800 text-xs font-semibold flex items-center gap-1.5"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Nhập file JSON</span>
+                </button>
+                <input
+                  ref={jsonInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  onChange={handleImportJsonFile}
+                  className="hidden"
+                />
 
                 <button
                   onClick={handleExportCsv}
-                  className="px-4 py-2 rounded-xl bg-white/90 border border-slate-200 text-slate-800 text-xs font-medium flex items-center gap-1.5"
+                  className="px-3.5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>Xuất CSV</span>
                 </button>
 
                 <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-4 py-2 rounded-xl gold-badge text-xs font-semibold flex items-center gap-1.5"
+                  onClick={handleResetAllToZero}
+                  className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold flex items-center gap-1.5"
                 >
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>Nhập CSV</span>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Xóa toàn bộ dữ liệu (về 0)</span>
                 </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".csv,text/csv"
-                  onChange={handleImportCsvFile}
-                  className="hidden"
-                />
               </div>
             </div>
 
-            <div className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-3 flex flex-col justify-between">
-              <div className="space-y-2.5">
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full gold-badge text-xs">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Giới thiệu ứng dụng</span>
+            <div className="liquid-glass rounded-3xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="font-bold text-slate-900 text-sm">Nhập CSV</div>
+                <div className="text-xs text-slate-500">
+                  Khôi phục hoặc nạp dữ liệu từ file CSV (.csv) đã xuất từ UT BAKERY.
                 </div>
-                <h3 className="text-base font-bold text-slate-900">
-                  UT BAKERY — Bakery Manager
-                </h3>
-                <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
-                  Ứng dụng quản lý tiệm bánh chạy ổn định cả trực tuyến lẫn ngoại tuyến, lưu cục bộ
-                  tự động, hỗ trợ đồng bộ Google Drive và sao lưu/khôi phục CSV trên máy tính và
-                  điện thoại.
-                </p>
               </div>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shrink-0"
+              >
+                Chọn file CSV
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                onChange={handleImportCsvFile}
+                className="hidden"
+              />
+            </div>
 
-              <div className="p-3.5 rounded-2xl bg-white/75 border border-white text-xs sm:text-sm text-slate-800 space-y-1">
-                <div className="font-bold text-slate-900">LIT STUDIO</div>
-                <div>Tác giả / Hỗ trợ: Đặng Thiện</div>
-                <div>Hotline / Zalo: 0935 187 404</div>
+            <div className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-2.5">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full gold-badge text-xs">
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>LIT STUDIO — Giới thiệu ứng dụng</span>
+              </div>
+              <h3 className="text-sm sm:text-base font-bold text-slate-900">
+                UT BAKERY — Giải pháp quản lý tiệm bánh toàn diện
+              </h3>
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed">
+                Phát triển bởi LIT STUDIO phục vụ vận hành liên tục online/offline, lịch Âm/Dương,
+                quản lý đơn hàng, khách hàng, nguyên liệu, công thức và tài chính trên đa thiết bị.
+              </p>
+              <div className="pt-2 border-t border-slate-200/70 text-xs text-slate-700">
+                Bản quyền thuộc <strong>LIT STUDIO</strong> | Hỗ trợ:{' '}
+                <strong>0935 187 404 (Đặng Thiện)</strong>
               </div>
             </div>
           </div>
         )}
       </main>
 
-      {/* MODAL THÊM NHANH & CHỈNH SỬA ĐA NĂNG (GIỐNG LIT SCHEDULE) */}
+      {/* Modal Thêm nhanh & Chỉnh sửa */}
       {quickAddOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/35 backdrop-blur-sm flex items-center justify-center p-3">
           <div className="liquid-glass bg-white/95 rounded-3xl w-full max-w-lg p-5 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -1947,7 +2459,7 @@ export function App() {
                       : 'text-slate-600'
                   }`}
                 >
-                  + Thu/Chi
+                  {editingTxId ? 'Sửa phiếu' : '+ Thu/Chi'}
                 </button>
               </div>
 
@@ -1959,7 +2471,6 @@ export function App() {
               </button>
             </div>
 
-            {/* 1. Form Đơn bánh */}
             {quickAddMode === 'order' && (
               <form onSubmit={handleSaveOrder} className="space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -1967,7 +2478,7 @@ export function App() {
                     <label className="text-[11px] text-slate-500">Khách hàng *</label>
                     <input
                       required
-                      list="customer-suggestions"
+                      list="modal-cus-list"
                       value={customerName}
                       onChange={(e) => {
                         const val = e.target.value;
@@ -1980,7 +2491,7 @@ export function App() {
                       placeholder="Tên khách hàng"
                       className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm"
                     />
-                    <datalist id="customer-suggestions">
+                    <datalist id="modal-cus-list">
                       {db.customers.map((c) => (
                         <option key={c.id} value={c.name} />
                       ))}
@@ -2004,11 +2515,15 @@ export function App() {
                     onChange={(e) => setSelectedProductId(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm"
                   >
-                    {db.products.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} — {formatVnd(p.sellingPrice)}
-                      </option>
-                    ))}
+                    {db.products.length === 0 ? (
+                      <option value="">Bánh đặt theo yêu cầu</option>
+                    ) : (
+                      db.products.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} — {formatVnd(p.sellingPrice)}
+                        </option>
+                      ))
+                    )}
                   </select>
                 </div>
 
@@ -2060,11 +2575,11 @@ export function App() {
                 </div>
 
                 <div>
-                  <label className="text-[11px] text-slate-500">Yêu cầu làm bánh</label>
+                  <label className="text-[11px] text-slate-500">Ghi chú</label>
                   <input
                     value={orderNote}
                     onChange={(e) => setOrderNote(e.target.value)}
-                    placeholder="Ví dụ: Ít ngọt, viết chữ lên bánh..."
+                    placeholder="Ít ngọt, ghi chữ lên bánh..."
                     className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm"
                   />
                 </div>
@@ -2078,7 +2593,6 @@ export function App() {
               </form>
             )}
 
-            {/* 2. Form Dịch vụ / Loại bánh */}
             {quickAddMode === 'product' && (
               <form onSubmit={handleSaveProduct} className="space-y-3">
                 <div>
@@ -2123,69 +2637,6 @@ export function App() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-700">
-                      Công thức nguyên liệu (Tự tính giá vốn)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setProdRecipe((prev) => [
-                          ...prev,
-                          { ingredientId: db.ingredients[0]?.id || '', quantity: 100 },
-                        ])
-                      }
-                      className="text-xs text-amber-700 font-semibold"
-                    >
-                      + Thêm nguyên liệu
-                    </button>
-                  </div>
-                  {prodRecipe.map((rec, i) => (
-                    <div key={i} className="flex items-center gap-2">
-                      <select
-                        value={rec.ingredientId}
-                        onChange={(e) =>
-                          setProdRecipe((prev) =>
-                            prev.map((item, idx) =>
-                              idx === i ? { ...item, ingredientId: e.target.value } : item
-                            )
-                          )
-                        }
-                        className="flex-1 px-2.5 py-1.5 rounded-xl bg-white border border-slate-200 text-xs"
-                      >
-                        {db.ingredients.map((ing) => (
-                          <option key={ing.id} value={ing.id}>
-                            {ing.name} ({ing.unit})
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        type="number"
-                        step="any"
-                        value={rec.quantity}
-                        onChange={(e) =>
-                          setProdRecipe((prev) =>
-                            prev.map((item, idx) =>
-                              idx === i ? { ...item, quantity: Number(e.target.value) } : item
-                            )
-                          )
-                        }
-                        className="w-24 px-2.5 py-1.5 rounded-xl bg-white border border-slate-200 text-xs"
-                      />
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setProdRecipe((prev) => prev.filter((_, idx) => idx !== i))
-                        }
-                        className="p-1.5 text-rose-600"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
                 <button
                   type="submit"
                   className="w-full gold-badge rounded-2xl py-2.5 text-sm font-semibold"
@@ -2195,7 +2646,6 @@ export function App() {
               </form>
             )}
 
-            {/* 3. Form Khách hàng */}
             {quickAddMode === 'customer' && (
               <form onSubmit={handleSaveCustomer} className="space-y-3">
                 <div>
@@ -2218,11 +2668,11 @@ export function App() {
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] text-slate-500">Sở thích / Lưu ý dị ứng</label>
+                  <label className="text-[11px] text-slate-500">Sở thích / Ghi chú</label>
                   <input
                     value={cusFormPref}
                     onChange={(e) => setCusFormPref(e.target.value)}
-                    placeholder="Ít đường, không hạnh nhân..."
+                    placeholder="Ít đường, giao chiều..."
                     className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm"
                   />
                 </div>
@@ -2235,7 +2685,6 @@ export function App() {
               </form>
             )}
 
-            {/* 4. Form Thu / Chi nhanh */}
             {quickAddMode === 'transaction' && (
               <form onSubmit={handleAddTransaction} className="space-y-3">
                 <select
@@ -2271,7 +2720,7 @@ export function App() {
                   type="submit"
                   className="w-full gold-badge rounded-2xl py-2.5 text-sm font-semibold"
                 >
-                  Lưu phiếu Thu / Chi
+                  {editingTxId ? 'Lưu chỉnh sửa phiếu' : 'Lưu phiếu Thu / Chi'}
                 </button>
               </form>
             )}

@@ -193,6 +193,25 @@ export function saveLocalDatabase(db: BakeryDatabase): void {
   }
 }
 
+export function clearAllDatabaseData(currentConfig: BakeryDatabase['config']): BakeryDatabase {
+  const cleared: BakeryDatabase = {
+    ingredients: [],
+    products: [],
+    orders: [],
+    transactions: [],
+    customers: [],
+    suppliers: [],
+    staff: [],
+    config: {
+      ...currentConfig,
+      lastSyncedAt: undefined,
+    },
+  };
+  localStorage.setItem('UT_BAKERY_CLEARED_V1', '1');
+  localStorage.setItem('UT_BAKERY_DB_V1', JSON.stringify(cleared));
+  return cleared;
+}
+
 export function hasPendingDriveSync(): boolean {
   return Boolean(localStorage.getItem(PENDING_SYNC_KEY));
 }
@@ -446,3 +465,4 @@ export function importDatabaseFromCsv(csvText: string, currentDb: BakeryDatabase
 
   return nextDb;
 }
+
