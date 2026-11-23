@@ -120,8 +120,8 @@ export function App() {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [selectedProductId, setSelectedProductId] = useState(() => db.products[0]?.id || '');
-  const [quantity, setQuantity] = useState(1);
-  const [deposit, setDeposit] = useState(0);
+  const [quantity, setQuantity] = useState<string | number>('');
+  const [deposit, setDeposit] = useState<string | number>('');
   const [deliveryDate, setDeliveryDate] = useState<string>(todayIso);
   const [deliveryTime, setDeliveryTime] = useState('15:00');
   const [orderNote, setOrderNote] = useState('');
@@ -133,8 +133,8 @@ export function App() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [prodName, setProdName] = useState('');
   const [prodCategory, setProdCategory] = useState('Bánh Kem');
-  const [prodPrice, setProdPrice] = useState(250000);
-  const [prodPrepMins, setProdPrepMins] = useState(60);
+  const [prodPrice, setProdPrice] = useState<string | number>('');
+  const [prodPrepMins, setProdPrepMins] = useState<string | number>('');
   const [prodRecipe, setProdRecipe] = useState<{ ingredientId: string; quantity: number }[]>([]);
 
   // Form Khách hàng (Tạo & Sửa)
@@ -147,15 +147,15 @@ export function App() {
   const [editingIngredient, setEditingIngredient] = useState<Ingredient | null>(null);
   const [newIngName, setNewIngName] = useState('');
   const [newIngUnit, setNewIngUnit] = useState('g');
-  const [newIngStock, setNewIngStock] = useState(1000);
-  const [newIngCost, setNewIngCost] = useState(0.1);
-  const [newIngMin, setNewIngMin] = useState(300);
+  const [newIngStock, setNewIngStock] = useState<string | number>('');
+  const [newIngCost, setNewIngCost] = useState<string | number>('');
+  const [newIngMin, setNewIngMin] = useState<string | number>('');
 
   // Form Thu / Chi (Tạo & Sửa)
   const [editingTxId, setEditingTxId] = useState<string | null>(null);
   const [txType, setTxType] = useState<'income' | 'expense'>('income');
   const [txCategory, setTxCategory] = useState('Bán lẻ tại tiệm');
-  const [txAmount, setTxAmount] = useState(0);
+  const [txAmount, setTxAmount] = useState<string | number>('');
   const [txNote, setTxNote] = useState('');
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -564,8 +564,8 @@ export function App() {
       setCustomerName('');
       setCustomerPhone('');
       setSelectedProductId(db.products[0]?.id || '');
-      setQuantity(1);
-      setDeposit(0);
+      setQuantity('');
+      setDeposit('');
       setDeliveryDate(presetDate || selectedDate || todayIso);
       setDeliveryTime('15:00');
       setOrderNote('');
@@ -573,8 +573,8 @@ export function App() {
       setEditingProduct(null);
       setProdName('');
       setProdCategory('Bánh Kem');
-      setProdPrice(250000);
-      setProdPrepMins(60);
+      setProdPrice('');
+      setProdPrepMins('');
       setProdRecipe([]);
     } else if (mode === 'customer') {
       setEditingCustomer(null);
@@ -585,7 +585,7 @@ export function App() {
       setEditingTxId(null);
       setTxType('income');
       setTxCategory('Bán lẻ tại tiệm');
-      setTxAmount(0);
+      setTxAmount('');
       setTxNote('');
     }
     setQuickAddOpen(true);
@@ -612,9 +612,9 @@ export function App() {
     const finalUnitPrice = product ? product.sellingPrice : 0;
     if (!customerName.trim()) return;
 
-    const safeQty = Math.max(1, quantity);
+    const safeQty = Math.max(1, Number(quantity) || 1);
     const total = finalUnitPrice * safeQty;
-    const safeDeposit = Math.max(0, Math.min(deposit, total));
+    const safeDeposit = Math.max(0, Math.min(Number(deposit) || 0, total));
     const remaining = total - safeDeposit;
 
     if (editingOrder) {
@@ -1061,7 +1061,7 @@ export function App() {
 
   const handleAddTransaction = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!txAmount || txAmount <= 0) return;
+    if (!Number(txAmount) || Number(txAmount) <= 0) return;
     setDb((prev) => {
       const nextTx = editingTxId
         ? prev.transactions.map((t) =>
@@ -1091,7 +1091,7 @@ export function App() {
       return nextDb;
     });
     setEditingTxId(null);
-    setTxAmount(0);
+    setTxAmount('');
     setTxNote('');
     setQuickAddOpen(false);
     notify('Đã cập nhật sổ giao dịch');
@@ -1358,8 +1358,7 @@ export function App() {
                       type="number"
                       min={1}
                       value={quantity}
-                      onChange={(e) => setQuantity(Number(e.target.value))}
-                      placeholder="Số lượng"
+                      onChange={(e) => setQuantity(e.target.value)} placeholder="Số lượng (VD: 1)"
                       className="px-3 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
                     />
                     <input
@@ -1367,8 +1366,7 @@ export function App() {
                       min={0}
                       step={10000}
                       value={deposit}
-                      onChange={(e) => setDeposit(Number(e.target.value))}
-                      placeholder="Tiền cọc"
+                      onChange={(e) => setDeposit(e.target.value)} placeholder="Tiền cọc (VNĐ)"
                       className="px-3 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
                     />
                   </div>
@@ -1844,22 +1842,20 @@ export function App() {
                 <input
                   value={newIngUnit}
                   onChange={(e) => setNewIngUnit(e.target.value)}
-                  placeholder="Đơn vị"
+                  placeholder="Đơn vị (g, ml, cái)"
                   className="px-2.5 py-2 rounded-xl bg-white/85 border border-white text-xs sm:text-sm"
                 />
                 <input
                   type="number"
                   value={newIngStock}
-                  onChange={(e) => setNewIngStock(Number(e.target.value))}
-                  placeholder="Tồn kho"
+                  onChange={(e) => setNewIngStock(e.target.value)} placeholder="Tồn kho (VD: 1000)"
                   className="px-2.5 py-2 rounded-xl bg-white/85 border border-white text-xs sm:text-sm"
                 />
                 <input
                   type="number"
                   step="any"
                   value={newIngCost}
-                  onChange={(e) => setNewIngCost(Number(e.target.value))}
-                  placeholder="Giá/đv"
+                  onChange={(e) => setNewIngCost(e.target.value)} placeholder="Giá vốn / đv (đ)"
                   className="px-2.5 py-2 rounded-xl bg-white/85 border border-white text-xs sm:text-sm"
                 />
                 <button
@@ -1996,11 +1992,7 @@ export function App() {
                       type="number"
                       min={0}
                       step={1000}
-                      value={txType === 'income' ? txAmount : 0}
-                      onChange={(e) => {
-                        setTxType('income');
-                        setTxAmount(Number(e.target.value));
-                      }}
+                      value={txType === 'income' ? txAmount : ''} onChange={(e) => { setTxType('income'); setTxAmount(e.target.value); }}
                       placeholder="Số tiền thu (VNĐ) *"
                       className="px-3.5 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
                     />
@@ -2048,11 +2040,7 @@ export function App() {
                       type="number"
                       min={0}
                       step={1000}
-                      value={txType === 'expense' ? txAmount : 0}
-                      onChange={(e) => {
-                        setTxType('expense');
-                        setTxAmount(Number(e.target.value));
-                      }}
+                      value={txType === 'expense' ? txAmount : ''} onChange={(e) => { setTxType('expense'); setTxAmount(e.target.value); }}
                       placeholder="Số tiền chi (VNĐ) *"
                       className="px-3.5 py-2.5 rounded-xl bg-white/90 border border-slate-200 text-sm"
                     />
@@ -2534,7 +2522,7 @@ export function App() {
                       type="number"
                       min={1}
                       value={quantity}
-                      onChange={(e) => setQuantity(Number(e.target.value))}
+                      onChange={(e) => setQuantity(e.target.value)} placeholder="Số lượng (VD: 1)"
                       className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm"
                     />
                   </div>
@@ -2545,7 +2533,7 @@ export function App() {
                       min={0}
                       step={10000}
                       value={deposit}
-                      onChange={(e) => setDeposit(Number(e.target.value))}
+                      onChange={(e) => setDeposit(e.target.value)} placeholder="Tiền cọc (VNĐ)"
                       className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm"
                     />
                   </div>
@@ -2609,8 +2597,7 @@ export function App() {
                   <div>
                     <label className="text-[11px] text-slate-500">Nhóm</label>
                     <input
-                      value={prodCategory}
-                      onChange={(e) => setProdCategory(e.target.value)}
+                      value={prodCategory} onChange={(e) => setProdCategory(e.target.value)} placeholder="VD: Bánh Kem"
                       className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm"
                     />
                   </div>
@@ -2621,7 +2608,7 @@ export function App() {
                       min={0}
                       step={5000}
                       value={prodPrice}
-                      onChange={(e) => setProdPrice(Number(e.target.value))}
+                      onChange={(e) => setProdPrice(e.target.value)} placeholder="VD: 250000"
                       className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm"
                     />
                   </div>
@@ -2631,7 +2618,7 @@ export function App() {
                       type="number"
                       min={5}
                       value={prodPrepMins}
-                      onChange={(e) => setProdPrepMins(Number(e.target.value))}
+                      onChange={(e) => setProdPrepMins(e.target.value)} placeholder="VD: 60"
                       className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm"
                     />
                   </div>
@@ -2706,7 +2693,7 @@ export function App() {
                   min={0}
                   step={1000}
                   value={txAmount}
-                  onChange={(e) => setTxAmount(Number(e.target.value))}
+                  onChange={(e) => setTxAmount(e.target.value)}
                   placeholder="Số tiền (VNĐ)"
                   className="w-full px-3 py-2 rounded-xl bg-white border border-slate-200 text-sm"
                 />
@@ -2751,3 +2738,4 @@ export function App() {
 }
 
 export default App;
+
