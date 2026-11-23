@@ -169,8 +169,13 @@ export function loadLocalDatabase(): BakeryDatabase {
     }
     const parsed = JSON.parse(raw) as Partial<BakeryDatabase>;
     return {
-      ...INITIAL_BAKERY_DB,
-      ...parsed,
+      ingredients: Array.isArray(parsed.ingredients) ? parsed.ingredients : INITIAL_BAKERY_DB.ingredients,
+      products: Array.isArray(parsed.products) ? parsed.products : INITIAL_BAKERY_DB.products,
+      orders: Array.isArray(parsed.orders) ? parsed.orders : INITIAL_BAKERY_DB.orders,
+      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : INITIAL_BAKERY_DB.transactions,
+      customers: Array.isArray(parsed.customers) ? parsed.customers : INITIAL_BAKERY_DB.customers,
+      suppliers: Array.isArray(parsed.suppliers) ? parsed.suppliers : INITIAL_BAKERY_DB.suppliers,
+      staff: Array.isArray(parsed.staff) ? parsed.staff : INITIAL_BAKERY_DB.staff,
       config: {
         ...INITIAL_BAKERY_DB.config,
         ...(parsed.config || {}),
