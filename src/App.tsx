@@ -151,6 +151,21 @@ export function App() {
   const [newIngCost, setNewIngCost] = useState<string | number>('');
   const [newIngMin, setNewIngMin] = useState<string | number>('');
 
+  // Form Nhà cung cấp (Tạo & Sửa)
+  const [editingSupplierId, setEditingSupplierId] = useState<string | null>(null);
+  const [supName, setSupName] = useState('');
+  const [supPhone, setSupPhone] = useState('');
+  const [supDebt, setSupDebt] = useState<string | number>('');
+  const [supNote, setSupNote] = useState('');
+
+  // Form Nhân viên (Tạo & Sửa)
+  const [editingStaffId, setEditingStaffId] = useState<string | null>(null);
+  const [stfName, setStfName] = useState('');
+  const [stfRole, setStfRole] = useState('');
+  const [stfPhone, setStfPhone] = useState('');
+  const [stfShift, setStfShift] = useState('');
+  const [stfTask, setStfTask] = useState('');
+
   // Form Thu / Chi (Tạo & Sửa)
   const [editingTxId, setEditingTxId] = useState<string | null>(null);
   const [txType, setTxType] = useState<'income' | 'expense'>('income');
@@ -1059,6 +1074,195 @@ export function App() {
     notify(`Đã xóa ${ing.name}`);
   };
 
+  const handleSaveSupplier = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!supName.trim()) return;
+    const debtVal = Math.max(0, Number(supDebt) || 0);
+
+    setDb((prev) => {
+      const nextSuppliers = editingSupplierId
+        ? prev.suppliers.map((s) =>
+            s.id === editingSupplierId
+              ? {
+                  ...s,
+                  name: supName.trim(),
+                  phone: supPhone.trim(),
+                  debtAmount: debtVal,
+                  note: supNote.trim() || undefined,
+                }
+              : s
+          )
+        : [
+            {
+              id: `sup-${Date.now()}`,
+              name: supName.trim(),
+              phone: supPhone.trim(),
+              debtAmount: debtVal,
+              note: supNote.trim() || undefined,
+            },
+            ...prev.suppliers,
+          ];
+      const nextDb: BakeryDatabase = { ...prev, suppliers: nextSuppliers };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
+
+    setEditingSupplierId(null);
+    setSupName('');
+    setSupPhone('');
+    setSupDebt('');
+    setSupNote('');
+    notify(editingSupplierId ? 'Đã cập nhật nhà cung cấp' : 'Đã thêm nhà cung cấp');
+  };
+
+  const handlePaySupplierDebt = (supId: string, supTitle: string, currentDebt: number) => {
+    if (currentDebt <= 0) {
+      notify('Nhà cung cấp này hiện không còn công nợ');
+      return;
+    }
+    const rawPay = window.prompt(
+      `Nhập số tiền thanh toán cho "${supTitle}" (Nợ hiện tại: ${formatVnd(currentDebt)}):`,
+      String(currentDebt)
+    );
+    if (!rawPay) return;
+    const payAmount = Math.min(currentDebt, Math.max(0, Number(rawPay.replace(/[^\d]/g, '')) || 0));
+    if (payAmount <= 0) return;
+
+    setDb((prev) => {
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        suppliers: prev.suppliers.map((s) =>
+          s.id === supId ? { ...s, debtAmount: Math.max(0, s.debtAmount - payAmount) } : s
+        ),
+        transactions: [
+          {
+            id: `tx-sup-${Date.now()}`,
+            date: todayIso,
+            type: 'expense',
+            category: 'Trả nợ nhà cung cấp',
+            amount: payAmount,
+            note: `Thanh toán công nợ nguyên liệu: ${supTitle}`,
+          },
+          ...prev.transactions,
+        ],
+      };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
+    notify(`Đã trả ${formatVnd(payAmount)} & ghi sổ chi`);
+  };
+
+  const handleDeleteSupplier = (supId: string, supTitle: string) => {
+    if (!window.confirm(`Xóa nhà cung cấp "${supTitle}"?`)) return;
+    setDb((prev) => {
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        suppliers: prev.suppliers.filter((s) => s.id !== supId),
+      };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
+    notify(`Đã xóa nhà cung cấp ${supTitle}`);
+  };
+
+  const handleSaveStaff = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!stfName.trim()) return;
+
+    setDb((prev) => {
+      const nextStaff = editingStaffId
+        ? prev.staff.map((st) =>
+            st.id === editingStaffId
+              ? {
+                  ...st,
+                  name: stfName.trim(),
+                  role: stfRole.trim() || 'Nhân viên',
+                  phone: stfPhone.trim(),
+                  shift: stfShift.trim() || 'Ca linh hoạt',
+                  activeTask: stfTask.trim() || undefined,
+                }
+              : st
+          )
+        : [
+            {
+              id: `stf-${Date.now()}`,
+              name: stfName.trim(),
+              role: stfRole.trim() || 'Nhân viên',
+              phone: stfPhone.trim(),
+              shift: stfShift.trim() || 'Ca linh hoạt',
+              attendanceToday: true,
+              activeTask: stfTask.trim() || undefined,
+            },
+            ...prev.staff,
+          ];
+      const nextDb: BakeryDatabase = { ...prev, staff: nextStaff };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
+
+    setEditingStaffId(null);
+    setStfName('');
+    setStfRole('');
+    setStfPhone('');
+    setStfShift('');
+    setStfTask('');
+    notify(editingStaffId ? 'Đã cập nhật nhân viên' : 'Đã thêm nhân viên');
+  };
+
+  const handleToggleStaffAttendance = (staffId: string) => {
+    setDb((prev) => {
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        staff: prev.staff.map((st) =>
+          st.id === staffId ? { ...st, attendanceToday: !st.attendanceToday } : st
+        ),
+      };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
+    notify('Đã cập nhật trạng thái điểm danh hôm nay');
+  };
+
+  const handlePayStaffSalary = (staffName: string) => {
+    const rawPay = window.prompt(`Nhập tiền công / lương chi trả cho "${staffName}" (VNĐ):`, '300000');
+    if (!rawPay) return;
+    const payAmount = Math.max(0, Number(rawPay.replace(/[^\d]/g, '')) || 0);
+    if (payAmount <= 0) return;
+
+    setDb((prev) => {
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        transactions: [
+          {
+            id: `tx-stf-${Date.now()}`,
+            date: todayIso,
+            type: 'expense',
+            category: 'Chi phí công thợ / lương',
+            amount: payAmount,
+            note: `Trả công / lương nhân viên: ${staffName}`,
+          },
+          ...prev.transactions,
+        ],
+      };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
+    notify(`Đã chi ${formatVnd(payAmount)} công thợ & đồng bộ tài chính`);
+  };
+
+  const handleDeleteStaff = (staffId: string, staffName: string) => {
+    if (!window.confirm(`Xóa nhân viên "${staffName}"?`)) return;
+    setDb((prev) => {
+      const nextDb: BakeryDatabase = {
+        ...prev,
+        staff: prev.staff.filter((st) => st.id !== staffId),
+      };
+      saveLocalDatabase(nextDb);
+      return nextDb;
+    });
+    notify(`Đã xóa nhân viên ${staffName}`);
+  };
+
   const handleAddTransaction = (e: React.FormEvent) => {
     e.preventDefault();
     if (!Number(txAmount) || Number(txAmount) <= 0) return;
@@ -1197,7 +1401,7 @@ export function App() {
             <button
               onClick={handleExportCsv}
               title="Xuất CSV"
-              className="w-9 h-9 rounded-full bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center transition shadow-sm"
+              className="w-9 h-9 rounded-full bg-slate-900 hover:bg-[#FFFDF8] text-slate-900 flex items-center justify-center transition shadow-sm"
             >
               <Download className="w-4 h-4" />
             </button>
@@ -1422,7 +1626,7 @@ export function App() {
                 value={bulkText}
                 onChange={(e) => setBulkText(e.target.value)}
                 placeholder={
-                  'Nhập danh sách đơn bánh (mỗi dòng một đơn)...\nVí dụ: Bánh Kem Dâu 18cm - Nguyễn Hậu - 25/11/2026 - 16:00 - 380,000 - 150,000 - Ít ngọt'
+                  'Nhập danh sách đơn bánh (mỗi dòng một đơn)...\nVí dụ: Bánh Kem Dâu 18cm - LIT - 25/11/2026 - 16:00 - 380,000 - 150,000 - Ít ngọt'
                 }
                 className="w-full px-3.5 py-2.5 rounded-2xl bg-white/90 border border-slate-200 text-xs sm:text-sm font-mono focus:outline-none"
               />
@@ -1615,7 +1819,7 @@ export function App() {
                                   </span>
                                 </div>
                                 {cell.orderCount > 0 && (
-                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-sky-600 text-white leading-none shrink-0">
+                                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-sky-600 text-slate-900 leading-none shrink-0">
                                     {cell.orderCount}
                                   </span>
                                 )}
@@ -1957,7 +2161,7 @@ export function App() {
               {partnerSubView === 'customers' && (
                 <button
                   onClick={() => openQuickAdd('customer')}
-                  className="px-3.5 py-2 rounded-xl bg-sky-600 text-white text-xs font-semibold flex items-center gap-1"
+                  className="px-3.5 py-2 rounded-xl bg-sky-600 text-slate-900 text-xs font-semibold flex items-center gap-1"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Thêm khách hàng</span>
@@ -2082,7 +2286,7 @@ export function App() {
                         onClick={() => setTxFilter('income')}
                         className={`px-2.5 py-1 rounded-full text-xs font-medium ${
                           txFilter === 'income'
-                            ? 'bg-emerald-600 text-white'
+                            ? 'bg-emerald-600 text-slate-900'
                             : 'bg-white/80 text-slate-600'
                         }`}
                       >
@@ -2233,48 +2437,288 @@ export function App() {
             )}
 
             {partnerSubView === 'suppliers' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {db.suppliers.map((s) => (
-                  <div key={s.id} className="liquid-glass rounded-3xl p-4 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-sm text-slate-900 flex items-center gap-1.5">
-                        <Truck className="w-4 h-4 text-slate-500" />
-                        {s.name}
-                      </span>
-                      <span className="text-xs font-bold text-rose-600">
-                        Nợ: {formatVnd(s.debtAmount)}
-                      </span>
-                    </div>
-                    <div className="text-xs text-slate-600">SĐT: {s.phone}</div>
+              <div className="space-y-4">
+                <form
+                  onSubmit={handleSaveSupplier}
+                  className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-bold text-slate-900 text-sm">
+                      {editingSupplierId ? 'Chỉnh sửa nhà cung cấp' : '+ Thêm nhà cung cấp nguyên liệu'}
+                    </h2>
+                    {editingSupplierId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingSupplierId(null);
+                          setSupName('');
+                          setSupPhone('');
+                          setSupDebt('');
+                          setSupNote('');
+                        }}
+                        className="text-xs text-slate-500 underline"
+                      >
+                        Hủy sửa
+                      </button>
+                    )}
                   </div>
-                ))}
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                    <input
+                      required
+                      value={supName}
+                      onChange={(e) => setSupName(e.target.value)}
+                      placeholder="Tên nhà cung cấp *"
+                      className="px-3.5 py-2.5 rounded-xl bg-[#FFFDF8]/90 border border-[#DDD2B5] text-sm"
+                    />
+                    <input
+                      value={supPhone}
+                      onChange={(e) => setSupPhone(e.target.value)}
+                      placeholder="Số điện thoại liên hệ"
+                      className="px-3.5 py-2.5 rounded-xl bg-[#FFFDF8]/90 border border-[#DDD2B5] text-sm"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      step={1000}
+                      value={supDebt}
+                      onChange={(e) => setSupDebt(e.target.value)}
+                      placeholder="Công nợ hiện tại (VNĐ)"
+                      className="px-3.5 py-2.5 rounded-xl bg-[#FFFDF8]/90 border border-[#DDD2B5] text-sm"
+                    />
+                    <input
+                      value={supNote}
+                      onChange={(e) => setSupNote(e.target.value)}
+                      placeholder="Ghi chú (mặt hàng, lịch giao...)"
+                      className="px-3.5 py-2.5 rounded-xl bg-[#FFFDF8]/90 border border-[#DDD2B5] text-sm"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs sm:text-sm font-semibold"
+                  >
+                    {editingSupplierId ? 'Lưu thay đổi' : 'Lưu nhà cung cấp'}
+                  </button>
+                </form>
+
+                {db.suppliers.length === 0 ? (
+                  <div className="liquid-glass rounded-3xl p-6 text-center text-xs sm:text-sm text-slate-500">
+                    Chưa có dữ liệu nhà cung cấp nào.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {db.suppliers.map((s) => (
+                      <div
+                        key={s.id}
+                        className="liquid-glass rounded-3xl p-4 flex items-start justify-between gap-2"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold text-sm text-slate-900 flex items-center gap-1.5">
+                              <Truck className="w-4 h-4 text-slate-500" />
+                              {s.name}
+                            </span>
+                            <span
+                              className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                                s.debtAmount > 0
+                                  ? 'bg-rose-100 text-rose-700'
+                                  : 'bg-emerald-100 text-emerald-700'
+                              }`}
+                            >
+                              {s.debtAmount > 0 ? `Nợ: ${formatVnd(s.debtAmount)}` : 'Đã tất toán'}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-600">
+                            SĐT: {s.phone || 'Chưa cập nhật'}
+                          </div>
+                          {s.note && <div className="text-xs text-slate-500">Ghi chú: {s.note}</div>}
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          {s.debtAmount > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handlePaySupplierDebt(s.id, s.name, s.debtAmount)}
+                              className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold"
+                            >
+                              Trả nợ
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingSupplierId(s.id);
+                              setSupName(s.name);
+                              setSupPhone(s.phone);
+                              setSupDebt(s.debtAmount || '');
+                              setSupNote(s.note || '');
+                            }}
+                            className="p-2 rounded-xl bg-[#FFFDF8]/85 hover:bg-[#FFFDF8] text-slate-700"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSupplier(s.id, s.name)}
+                            className="p-2 rounded-xl bg-[#FFFDF8]/85 hover:bg-rose-50 text-rose-600"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
             {partnerSubView === 'staff' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {db.staff.map((st) => (
-                  <div key={st.id} className="liquid-glass rounded-3xl p-4 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold text-sm text-slate-900 flex items-center gap-1.5">
-                        <Users className="w-4 h-4 text-slate-500" />
-                        {st.name}
-                      </span>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
-                        {st.role}
-                      </span>
-                    </div>
-                    <div className="text-xs text-slate-600">
-                      Ca: {st.shift} • SĐT: {st.phone}
-                    </div>
+              <div className="space-y-4">
+                <form
+                  onSubmit={handleSaveStaff}
+                  className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <h2 className="font-bold text-slate-900 text-sm">
+                      {editingStaffId ? 'Chỉnh sửa nhân viên' : '+ Thêm thợ bánh / nhân viên'}
+                    </h2>
+                    {editingStaffId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingStaffId(null);
+                          setStfName('');
+                          setStfRole('');
+                          setStfPhone('');
+                          setStfShift('');
+                          setStfTask('');
+                        }}
+                        className="text-xs text-slate-500 underline"
+                      >
+                        Hủy sửa
+                      </button>
+                    )}
                   </div>
-                ))}
+                  <div className="grid grid-cols-1 sm:grid-cols-5 gap-2.5">
+                    <input
+                      required
+                      value={stfName}
+                      onChange={(e) => setStfName(e.target.value)}
+                      placeholder="Họ tên nhân viên *"
+                      className="px-3.5 py-2.5 rounded-xl bg-[#FFFDF8]/90 border border-[#DDD2B5] text-sm"
+                    />
+                    <input
+                      value={stfRole}
+                      onChange={(e) => setStfRole(e.target.value)}
+                      placeholder="Vị trí (VD: Thợ bánh chính)"
+                      className="px-3.5 py-2.5 rounded-xl bg-[#FFFDF8]/90 border border-[#DDD2B5] text-sm"
+                    />
+                    <input
+                      value={stfPhone}
+                      onChange={(e) => setStfPhone(e.target.value)}
+                      placeholder="Số điện thoại"
+                      className="px-3.5 py-2.5 rounded-xl bg-[#FFFDF8]/90 border border-[#DDD2B5] text-sm"
+                    />
+                    <input
+                      value={stfShift}
+                      onChange={(e) => setStfShift(e.target.value)}
+                      placeholder="Ca làm (VD: 07:00 - 15:00)"
+                      className="px-3.5 py-2.5 rounded-xl bg-[#FFFDF8]/90 border border-[#DDD2B5] text-sm"
+                    />
+                    <input
+                      value={stfTask}
+                      onChange={(e) => setStfTask(e.target.value)}
+                      placeholder="Việc đang phụ trách"
+                      className="px-3.5 py-2.5 rounded-xl bg-[#FFFDF8]/90 border border-[#DDD2B5] text-sm"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs sm:text-sm font-semibold"
+                  >
+                    {editingStaffId ? 'Lưu thay đổi' : 'Lưu nhân viên'}
+                  </button>
+                </form>
+
+                {db.staff.length === 0 ? (
+                  <div className="liquid-glass rounded-3xl p-6 text-center text-xs sm:text-sm text-slate-500">
+                    Chưa có dữ liệu nhân viên nào.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {db.staff.map((st) => (
+                      <div
+                        key={st.id}
+                        className="liquid-glass rounded-3xl p-4 flex items-start justify-between gap-2"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold text-sm text-slate-900 flex items-center gap-1.5">
+                              <Users className="w-4 h-4 text-slate-500" />
+                              {st.name}
+                            </span>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium">
+                              {st.role}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleStaffAttendance(st.id)}
+                              className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                                st.attendanceToday
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-slate-200 text-slate-600'
+                              }`}
+                            >
+                              {st.attendanceToday ? 'Có mặt hôm nay' : 'Nghỉ / Chưa chấm'}
+                            </button>
+                          </div>
+                          <div className="text-xs text-slate-600">
+                            Ca: {st.shift} • SĐT: {st.phone || 'Chưa cập nhật'}
+                          </div>
+                          {st.activeTask && (
+                            <div className="text-xs text-slate-500">Phụ trách: {st.activeTask}</div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handlePayStaffSalary(st.name)}
+                            className="px-2.5 py-1.5 rounded-xl bg-amber-700 hover:bg-amber-800 text-white text-xs font-semibold"
+                          >
+                            Trả công
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingStaffId(st.id);
+                              setStfName(st.name);
+                              setStfRole(st.role);
+                              setStfPhone(st.phone);
+                              setStfShift(st.shift);
+                              setStfTask(st.activeTask || '');
+                            }}
+                            className="p-2 rounded-xl bg-[#FFFDF8]/85 hover:bg-[#FFFDF8] text-slate-700"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteStaff(st.id, st.name)}
+                            className="p-2 rounded-xl bg-[#FFFDF8]/85 hover:bg-rose-50 text-rose-600"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
-          </div>
-        )}
+              </div>
+            )}
 
-        {/* TAB 5: CÀI ĐẶT (GIỐNG ẢNH 5) */}
+            {/* TAB 5: CÀI ĐẶT (GIỐNG ẢNH 5) */}
         {activeTab === 'settings' && (
           <div className="space-y-4">
             <div className="liquid-glass rounded-3xl p-4 sm:p-5 space-y-3">
@@ -2300,7 +2744,7 @@ export function App() {
                 />
                 <button
                   onClick={handleManualSync}
-                  className="px-4 py-2 rounded-xl bg-sky-600 text-white text-xs font-semibold flex items-center justify-center gap-1.5"
+                  className="px-4 py-2 rounded-xl bg-sky-600 text-slate-900 text-xs font-semibold flex items-center justify-center gap-1.5"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>Đồng bộ ngay</span>
@@ -2333,7 +2777,7 @@ export function App() {
 
                 <button
                   onClick={handleExportCsv}
-                  className="px-3.5 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold flex items-center gap-1.5"
+                  className="px-3.5 py-2 rounded-xl bg-emerald-600 text-slate-900 text-xs font-semibold flex items-center gap-1.5"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>Xuất CSV</span>
@@ -2738,6 +3182,7 @@ export function App() {
 }
 
 export default App;
+
 
 
 
